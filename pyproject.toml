@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "palom"
+version = "2021.11.0"
+description = "Piecewise alignment for layers of mosaics"
+authors = ["Yu-An Chen <atwood12@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+# Pin python version to 3.7, python 3.8 needs workaround to import openslide DLL
+# https://github.com/openslide/openslide-python/issues/98
+python = ">=3.7.8,<3.8"
+scikit-image = "^0.18.3"
+scikit-learn = "^0.24.2"
+opencv-python = "^4.5.3.56"
+zarr = "^2.10.0"
+tifffile = "^2021.10.12"
+matplotlib = "^3.4.3"
+tqdm = "^4.62.3"
+napari-lazy-openslide = "^0.2.0"
+scipy = "^1.7.1"
+dask = "^2021.10.0"
+numpy = "^1.21.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
