@@ -1,0 +1,1 @@
+# Piecewise alignment for layers of mosaics
