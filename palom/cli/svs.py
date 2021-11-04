@@ -17,8 +17,8 @@ def main(argv=sys.argv):
 
     parser = argparse.ArgumentParser(
         description=(
-            'Align multiple SVS images of the same sample and writes a merged'
-            'pyramidal ome-tiff'
+            'Align multiple SVS images of the same biospecimen and writes a merged'
+            ' pyramidal ome-tiff'
         )
     )
     parser.add_argument(
@@ -27,8 +27,11 @@ def main(argv=sys.argv):
     )
 
     subparsers = parser.add_subparsers(
+        title='subcommands',
         dest='subparser_name',
-        help='sub-command help'
+        help=(
+            'show configuration yaml example and schema; run using a configuration file'
+        )
     )
 
     parser_show = subparsers.add_parser('show')
@@ -59,6 +62,11 @@ def main(argv=sys.argv):
     if len(argv) == 1:
         parser.print_help()
         return 0
+    
+    if args.version:
+        print(f"palom v{_version}")
+        return 0
+
     return args.func(args)
 
 
