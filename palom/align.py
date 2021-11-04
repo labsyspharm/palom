@@ -1,6 +1,5 @@
 import numpy as np
 import dask.array as da
-import dask.diagnostics
 import skimage.exposure
 import sklearn.linear_model
 from . import register
@@ -96,7 +95,9 @@ class ReaderAligner:
             moving_img,
             dtype=np.float32
         )
-        with dask.diagnostics.ProgressBar():
+        with tqdm.dask.TqdmCallback(
+            ascii=True, desc='Computing shifts',
+        ):
             shifts = shifts_da.compute()
         self.shifts = shifts.reshape(-1, 2)
 

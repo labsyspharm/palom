@@ -116,14 +116,14 @@ def count_num_channels(imgs):
 def tile_from_combined_mosaics(mosaics, tile_shape):
     num_rows, num_cols = mosaics[0].shape[1:3]
     h, w = tile_shape
-    for m in tqdm.tqdm(
-        mosaics,
-        ascii=True, desc='Assembling mosaic',
-        ncols=74, maxinterval=1
-    ):
+    n = len(mosaics)
+    for idx, m in enumerate(mosaics):
         # the performance is heavily degraded without pre-computing the mosaic
         # channel
-        m = m.compute()
+        with tqdm.dask.TqdmCallback(
+            ascii=True, desc=f'Assembling mosaic {idx+1:2}/{n:2}',
+        ):
+            m = m.compute()
         for c in m:
             for y in range(0, num_rows, h):
                 for x in range(0, num_cols, w):
@@ -139,10 +139,10 @@ def tile_from_pyramid(
     level=0
 ):
     h, w = tile_shape
-    for c in range(num_channels):
-        sys.stdout.write('\r        processing channel %d/%d'
-                        % (c + 1, num_channels))
-        sys.stdout.flush()
+    for c in tqdm.trange(
+            num_channels,
+            ascii=True, desc=f'Processing channel'
+        ):
         img = tifffile.imread(
             path, is_ome=False, series=0, key=c, level=level
         )
