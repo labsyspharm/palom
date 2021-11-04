@@ -1,9 +1,9 @@
-import sys
 import math
 import tifffile
 import tqdm
 import numpy as np
 import skimage.transform
+from loguru import logger
 
 from . import __version__ as _version
 
@@ -119,12 +119,12 @@ def write_pyramid(
             dtype=dtype,
             tile=tile_shapes[0]
         )
-        print('    generating pyramid')
+        logger.info('Generating pyramid')
         for level, (shape, tile_shape) in enumerate(
             zip(shapes[1:], tile_shapes[1:])
         ):
             if verbose:
-                print(f"    Level {level+1} ({shape[0]} x {shape[1]})")
+                logger.info(f"    Level {level+1} ({shape[0]} x {shape[1]})")
             tif.write(
                 data=tile_from_pyramid(
                     path,
@@ -138,8 +138,6 @@ def write_pyramid(
                 dtype=dtype,
                 tile=tile_shape
             )
-            if verbose:
-                print()
 
 
 def count_num_channels(imgs):

@@ -2,9 +2,11 @@ import numpy as np
 import dask.array as da
 import skimage.exposure
 import sklearn.linear_model
+from loguru import logger
+import tqdm.dask
+
 from . import register
 from . import block_affine
-
 
 class ReaderAligner:
     # aligner only uses single-channel form to register readers
@@ -29,6 +31,7 @@ class ReaderAligner:
         return self.ref_img.npartitions
     
     def coarse_register_affine(self, n_keypoints=2000):
+        logger.info(f"Coarse aligning to {self.ref_reader.path.name}")
         ref_img = self.ref_reader.get_processed_color(
             level=max(self.ref_reader.level_downsamples.keys())
         )
@@ -85,6 +88,7 @@ class ReaderAligner:
         )
 
     def compute_shifts(self):
+        logger.info(f"Computing block-wise shifts")
         ref_img = self.ref_img
         moving_img = self.affine_transformed_moving_img(mode='grayscale')
         shifts_da = da.map_blocks(
