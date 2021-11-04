@@ -37,10 +37,41 @@ class PyramidSetting:
         return math.ceil(math.log(factor, self.downscale_factor)) + 1
 
 
+def format_channel_names(mosaics, channel_names):
+    n_channels_each = [
+        count_num_channels([m])
+        for m in mosaics
+    ]
+    unique_names = make_unique_str(channel_names)
+    channel_names = [
+        [n]*c
+        for c, n in zip(n_channels_each, unique_names)
+    ]
+    return [n for l in channel_names for n in l]
+
+
+def make_unique_str(str_list):
+    if len(set(str_list)) == len(str_list):
+        return str_list
+    else:
+        max_length = max([len(s) for s in str_list])
+        str_np = np.array(str_list, dtype=np.dtype(('U', max_length+10)))
+        unique, counts = np.unique(str_np, return_counts=True)
+        has_duplicate = unique[counts > 1]
+        for n in has_duplicate:
+            suffixes = [
+                f"_{i}"
+                for i in range(1, (str_np == n).sum()+1)
+            ]
+            str_np[str_np == n] = np.char.add(n, suffixes)
+    return make_unique_str(list(str_np))
+
+
 def write_pyramid(
     mosaics,
     output_path,
     pixel_size=1,
+    channel_names=None,
     verbose=True,
 ):
     ref_m = mosaics[0]
@@ -68,7 +99,14 @@ def write_pyramid(
         },
     }
 
-    print("    writing to %s" % path)
+    if channel_names is not None:
+        names = format_channel_names(mosaics, channel_names)
+        if len(names) == num_channels:
+            metadata.update({
+                'Channel': {'Name': names},
+            })
+
+    logger.info(f"Writing to {path}")
     with tifffile.TiffWriter(path, bigtiff=True) as tif:
         tif.write(
             data=tile_from_combined_mosaics(
@@ -152,4 +190,4 @@ def tile_from_pyramid(
         num_rows, num_columns = img.shape
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):
-                yield img[y:y+h, x:x+w].copy()
+                yield np.array(img[y:y+h, x:x+w])
