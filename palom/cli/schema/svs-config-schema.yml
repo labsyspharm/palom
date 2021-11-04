@@ -1,0 +1,32 @@
+# Path to the lowest common directory of all the input imaging data
+input dir: str()
+
+# Path to the output FILE, must end with .ome.tif or .ome.tiff
+output full path: include('output format')
+
+# Number indicating input image pixel size in µm [optional but recommended]
+pixel size: num(required=False)
+
+# FOR DEV USE ONLY; Pyramid level to process, 0 is the lowest level pyramid
+pyramid level: num(required=False)
+
+# Image object (see below) - one imaging data file that used as the reference
+# image for other images to be aligned to
+reference image: include('image')
+
+# Image object or list of image objects - imaging data file(s) to be aligned to
+# the reference image [optional]
+moving images: any(include('image'), list(include('image')), required=False)
+
+---
+# Image object schema
+image:
+    # Filename or the remaining path to the imaging data relative to the input
+    # dir field 
+    filename: str()
+    # Output color mode, currently the following 4 modes are available
+    output mode: enum('intensity', 'hematoxylin', 'color', 'grayscale')
+    # Channel name in the output ome-tiff [optional but recommended]
+    channel name: str(required=False)
+
+output format: any(str(ends_with='.ome.tif'), str(ends_with='.ome.tiff'))

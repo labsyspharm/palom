@@ -1,0 +1,17 @@
+input dir: Y:\user\me\projects\data\mihc
+output full path: Y:\user\me\projects\analysis\mihc\2021\skin-case-356.ome.tif
+
+pixel size: 0.5
+
+reference image:
+    filename: 20210111/skin_case_356_HEM_C11R3_HEM.svs
+    output mode: hematoxylin
+    channel name: Hematoxylin
+
+moving images:
+- filename: 20210101/skin_case_356_HEM_C01R1_PD1.svs
+  output mode: intensity
+  channel name: PD-1
+- filename: 20210101/skin_case_356_HEM_C01R2_PDL1.svs
+  output mode: intensity
+  channel name: PD-L1
