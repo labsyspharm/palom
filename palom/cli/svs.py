@@ -13,6 +13,14 @@ from .. import __version__ as _version
 import matplotlib.pyplot as plt
 
 
+logger.remove()  # All configured handlers are removed
+logger.add(
+    sys.stderr,
+    format='<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>'
+)
+
+
+@logger.catch
 def main(argv=sys.argv):
 
     parser = argparse.ArgumentParser(
@@ -193,7 +201,6 @@ def run_palom(
     return 0
 
 
-@logger.catch
 def validate_output_path(out_path, overwrite=True):
     # write access
     out_img_path = pathlib.Path(out_path)
