@@ -5,6 +5,9 @@ import dask.array as da
 import numpy as np
 import skimage.color
 import skimage.exposure
+
+from loguru import logger
+
 from . import extract
 
 
@@ -14,6 +17,17 @@ class SvsReader:
         self.path = pathlib.Path(path)
         self.store = OpenSlideStore(str(self.path))
         self.zarr = zarr.open(self.store, mode='r')
+
+    @property
+    def pixel_size(self):
+        try:
+            return float(self.store._slide.properties['openslide.mpp-x'])
+        except:
+            logger.warning(
+                f'Unable to parse pixel size from {self.path.name};'
+                f' assuming 1 µm'
+            )
+            return 1
 
     @property
     def pixel_dtype(self):
