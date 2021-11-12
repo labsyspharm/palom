@@ -138,6 +138,16 @@ def run(args):
         for idx, i in enumerate(images)
     ]
 
+    channel_names = []
+    for idx, i in enumerate(images):
+        if 'channel names' in i:
+            names = i['channel names']
+        elif 'channel name' in i:
+            names = [i['channel name']]
+        else:
+            names = [f"File {idx+1}"]
+        channel_names.append(names)
+
     output_path, qc_path = validate_output_path(config['output full path'])
 
     run_result = run_palom(
