@@ -116,10 +116,10 @@ def run(args):
     if 'pyramid level' in config:
         LEVEL = config['pyramid level']
 
-    if 'pixel size' not in config:
-        logger.warning(f"Pixel size in the output file is not set, using 1 µm")
-        pixel_size = 1
-    else: pixel_size = config['pixel size']
+    if 'pixel size' in config:
+        pixel_size = config['pixel size']
+        logger.info(f"Using pixel size defined in configuration YAML file: {pixel_size} µm/pixel")
+    else: pixel_size = None
 
     images = get_image_list(config)
     
@@ -192,6 +192,9 @@ def run_palom(
         a.get_aligned_mosaic(mode=m)
         for a, m in zip(aligners, img_modes[1:])
     ]
+
+    if pixel_size is None:
+        pixel_size = ref_reader.pixel_size
 
     write_pyramid.write_pyramid(
         mosaics, output_path,
