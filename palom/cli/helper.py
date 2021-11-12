@@ -26,15 +26,9 @@ channel_names = [
     for p in ([ref_slide] + svs_paths)
 ]
 
-reader = palom.reader.SvsReader(ref_slide)
-pixel_size = float(
-    reader.store._slide.properties['openslide.mpp-x']
-)
-
 config = {
     'input dir': str(svs_dir),
     'output full path': '???',
-    'pixel size': pixel_size,
     'reference image': {
         'filename': str(ref_slide).replace(str(svs_dir), '.'),
         'output mode': 'hematoxylin',
