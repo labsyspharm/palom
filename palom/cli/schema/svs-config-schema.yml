@@ -12,21 +12,33 @@ pyramid level: num(required=False)
 
 # Image object (see below) - one imaging data file that used as the reference
 # image for other images to be aligned to
-reference image: include('image')
+reference image: include('image collection')
 
 # Image object or list of image objects - imaging data file(s) to be aligned to
 # the reference image [optional]
-moving images: any(include('image'), list(include('image')), required=False)
+moving images: list(include('image collection'), required=False)
 
 ---
 # Image object schema
-image:
+image collection: any(include('bright-field image'), include('fluorescent image'))
+
+_image_base: &_image_base
     # Filename or the remaining path to the imaging data relative to the input
     # dir field 
     filename: str()
-    # Output color mode, currently the following 4 modes are available
-    output mode: enum('intensity', 'hematoxylin', 'color', 'grayscale')
     # Channel name in the output ome-tiff [optional but recommended]
     channel name: str(required=False)
+    channel names: list(str(), min=1, required=False)
+
+bright-field image:
+    <<: *_image_base
+    channel names: list(str(), min=1, max=3, required=False)
+    # Output color mode, currently the following 4 modes are available
+    output mode: enum('intensity', 'hematoxylin', 'color', 'grayscale')
+  
+fluorescent image:
+    <<: *_image_base
+    output mode: str(equals='multichannel')
+    output channels: list(int(min=1), required=False)
 
 output format: any(str(ends_with='.ome.tif'), str(ends_with='.ome.tiff'))
