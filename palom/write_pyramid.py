@@ -37,17 +37,39 @@ class PyramidSetting:
         return math.ceil(math.log(factor, self.downscale_factor)) + 1
 
 
-def format_channel_names(mosaics, channel_names):
-    n_channels_each = [
-        count_num_channels([m])
-        for m in mosaics
+def format_channel_names(num_channels_each_mosaic, channel_names):
+    '''
+    format_channel_names(
+        [1, 2, 3, 4, 5], ['x', 'x', ['x'], ['x', 'x']]
+    )
+    >>> [
+        'x_1',
+        'x_2',
+        'x_3',
+        'x_4',
+        'x_5',
+        'x_6',
+        'Mosaic 4_1',
+        'Mosaic 4_2',
+        'Mosaic 4_3',
+        'Mosaic 4_4'
     ]
-    unique_names = make_unique_str(channel_names)
-    channel_names = [
-        [n]*c
-        for c, n in zip(n_channels_each, unique_names)
-    ]
-    return [n for l in channel_names for n in l]
+    '''
+    matched_channel_names = []
+    for idx, (n, c) in enumerate(
+        zip(channel_names, num_channels_each_mosaic)
+    ):
+        nl = n
+        if type(n) == str:
+            nl = [n] * c
+        if len(nl) == 1:
+            nl = nl * c
+        if len(nl) != c:
+            nl = [f"Mosaic {idx+1}"] * c
+        matched_channel_names.append(nl)
+    return make_unique_str(
+        [n for l in matched_channel_names for n in l]
+    )
 
 
 def make_unique_str(str_list):
@@ -100,7 +122,11 @@ def write_pyramid(
     }
 
     if channel_names is not None:
-        names = format_channel_names(mosaics, channel_names)
+        num_channels_each_mosaic = [
+            count_num_channels([m])
+            for m in mosaics
+        ]
+        names = format_channel_names(num_channels_each_mosaic, channel_names)
         if len(names) == num_channels:
             metadata.update({
                 'Channel': {'Name': names},
@@ -157,7 +183,8 @@ def tile_from_combined_mosaics(mosaics, tile_shape):
         # the performance is heavily degraded without pre-computing the mosaic
         # channel
         with tqdm.dask.TqdmCallback(
-            ascii=True, desc=f'Assembling mosaic {idx+1:2}/{n:2}',
+            ascii=True,
+            desc=f'Assembling mosaic ({m.shape[0]:2} channel(s)) {idx+1:2}/{n:2}',
         ):
             m = m.compute()
         for c in m:
