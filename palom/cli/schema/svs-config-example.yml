@@ -10,8 +10,8 @@ reference image:
 
 moving images:
 - filename: 20210101/skin_case_356_HEM_C01R1_PD1.svs
-  output mode: intensity
+  output mode: aec
   channel name: PD-1
 - filename: 20210101/skin_case_356_HEM_C01R2_PDL1.svs
-  output mode: intensity
+  output mode: aec
   channel name: PD-L1

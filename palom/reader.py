@@ -48,7 +48,7 @@ class SvsReader:
         ]
 
     def find_processed_color_contrast_range(self, mode):
-        assert mode in ['grayscale', 'hematoxylin', 'intensity']
+        assert mode in ['grayscale', 'hematoxylin', 'aec']
         
         mode_range = f'_{mode}_range'
         if hasattr(self, mode_range):
@@ -59,7 +59,7 @@ class SvsReader:
             img = self.rgb2gray(thumbnail)
         elif mode == 'hematoxylin':
             img = self.rgb2hematoxylin(thumbnail)
-        elif mode == 'intensity':
+        elif mode == 'aec':
             img = self.rgb2aec(thumbnail)
 
         setattr(self, mode_range, (
@@ -80,14 +80,14 @@ class SvsReader:
         return hax[..., 0].astype(np.float32)
 
     def get_processed_color(self, level, mode='grayscale'):
-        assert mode in ['grayscale', 'hematoxylin', 'intensity']
+        assert mode in ['grayscale', 'hematoxylin', 'aec']
         target = self.pyramid_color[level]
 
         if mode == 'grayscale':
             process_func = self.rgb2gray
         elif mode == 'hematoxylin':
             process_func = self.rgb2hematoxylin
-        elif mode == 'intensity':
+        elif mode == 'aec':
             process_func = self.rgb2aec
 
         intensity_range = self.find_processed_color_contrast_range(mode)

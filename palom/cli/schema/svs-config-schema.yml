@@ -34,7 +34,7 @@ bright-field image:
     <<: *_image_base
     channel names: list(str(), min=1, max=3, required=False)
     # Output color mode, currently the following 4 modes are available
-    output mode: enum('intensity', 'hematoxylin', 'color', 'grayscale')
+    output mode: enum('aec', 'hematoxylin', 'color', 'grayscale')
   
 fluorescent image:
     <<: *_image_base

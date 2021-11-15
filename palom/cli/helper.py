@@ -37,7 +37,7 @@ config = {
     'moving images': [
         {
             'filename': str(s).replace(str(svs_dir), '.'),
-            'output mode': 'intensity',
+            'output mode': 'aec',
             'channel name': n
         }
         for s, n in zip(svs_paths, channel_names[1:])
