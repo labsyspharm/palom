@@ -106,3 +106,16 @@ class SvsReader:
             processed,
             dtype=np.float32
         )
+
+    def read_image(self, channels, mode, level): 
+        if channels is not None: 
+            mode = 'multi-channel' 
+            return self.pyramid_color[level][..., channels] 
+        else: 
+            return self.get_processed_color(level, mode) 
+ 
+    def read_block(self, block_idx, channels, mode, level): 
+        full_img = self.read_image(channels, mode, level) 
+        assert block_idx < full_img.npartitions 
+        idx = np.unravel_index(block_idx, full_img.numblocks) 
+        return full_img[idx] 
