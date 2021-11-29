@@ -10,6 +10,7 @@ from . import (
     reader,
     align,
     write_pyramid,
+    color,
     
     # debugging
     block_affine,
