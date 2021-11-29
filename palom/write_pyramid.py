@@ -89,6 +89,21 @@ def make_unique_str(str_list):
     return make_unique_str(list(str_np))
 
 
+def normalize_mosaics(mosaics):
+    dtypes = set(m.dtype for m in mosaics)
+    if any([np.issubdtype(d, np.floating) for d in dtypes]):
+        max_dtype = np.dtype(np.float32)
+    else:
+        max_dtype = max(dtypes)
+    normalized = []
+    for m in mosaics:
+        assert m.ndim == 2 or m.ndim == 3
+        if m.ndim == 2:
+            m = m[np.newaxis, :]
+        normalized.append(m.astype(max_dtype, copy=False))
+    return normalized
+
+
 def write_pyramid(
     mosaics,
     output_path,
