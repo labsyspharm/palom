@@ -180,14 +180,17 @@ def tile_from_combined_mosaics(mosaics, tile_shape):
     h, w = tile_shape
     n = len(mosaics)
     for idx, m in enumerate(mosaics):
-        # the performance is heavily degraded without pre-computing the mosaic
-        # channel
-        with tqdm.dask.TqdmCallback(
-            ascii=True,
-            desc=f'Assembling mosaic ({m.shape[0]:2} channel(s)) {idx+1:2}/{n:2}',
-        ):
-            m = m.compute()
-        for c in m:
+        for cidx, c in enumerate(m):
+            # the performance is heavily degraded without pre-computing the
+            # mosaic channel
+            with tqdm.dask.TqdmCallback(
+                ascii=True,
+                desc=(
+                    f"Assembling mosaic {idx+1:2}/{n:2} (channel"
+                    f" {cidx+1:2}/{m.shape[0]:2})"
+                ),
+            ):
+                c = c.compute()
             for y in range(0, num_rows, h):
                 for x in range(0, num_cols, w):
                     yield np.array(c[y:y+h, x:x+w])
