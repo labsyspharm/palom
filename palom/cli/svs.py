@@ -7,7 +7,7 @@ import datetime
 import shutil
 
 from . import schema
-from .. import reader, align, write_pyramid
+from .. import reader, align, pyramid
 from .. import __version__ as _version
 
 import matplotlib.pyplot as plt
@@ -206,7 +206,7 @@ def run_palom(
     if pixel_size is None:
         pixel_size = ref_reader.pixel_size
 
-    write_pyramid.write_pyramid(
+    pyramid.write_pyramid(
         mosaics, output_path,
         pixel_size=pixel_size,
         channel_names=channel_names
