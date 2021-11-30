@@ -33,3 +33,9 @@ def cv2_to_uint8(img):
         norm_type=cv2.NORM_MINMAX,
         dtype=cv2.CV_8U
     )
+
+
+def is_single_channel(img):
+    is_2d = img.ndim == 2
+    is_flat_3d = img.ndim == 3 and img.shape[0] == 1
+    return is_2d or is_flat_3d

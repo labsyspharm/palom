@@ -7,17 +7,25 @@ import datetime
 import shutil
 
 from . import schema
-from .. import reader, align, write_pyramid
+from .. import reader, align, pyramid, color
 from .. import __version__ as _version
 
 import matplotlib.pyplot as plt
 
 
+logger.remove()  # All configured handlers are removed
+logger.add(
+    sys.stderr,
+    format='<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>'
+)
+
+
+@logger.catch
 def main(argv=sys.argv):
 
     parser = argparse.ArgumentParser(
         description=(
-            'Align multiple SVS images of the same biospecimen and writes a merged'
+            'Align multiple SVS images of the same biospecimen and write a merged'
             ' pyramidal ome-tiff'
         )
     )
@@ -108,10 +116,10 @@ def run(args):
     if 'pyramid level' in config:
         LEVEL = config['pyramid level']
 
-    if 'pixel size' not in config:
-        logger.warning(f"Pixel size in the output file is not set, using 1 µm")
-        pixel_size = 1
-    else: pixel_size = config['pixel size']
+    if 'pixel size' in config:
+        pixel_size = config['pixel size']
+        logger.info(f"Using pixel size defined in configuration YAML file: {pixel_size} µm/pixel")
+    else: pixel_size = None
 
     images = get_image_list(config)
     
@@ -129,6 +137,16 @@ def run(args):
         i['channel name'] if 'channel name' in i else f"Channel {idx+1}"
         for idx, i in enumerate(images)
     ]
+
+    channel_names = []
+    for idx, i in enumerate(images):
+        if 'channel names' in i:
+            names = i['channel names']
+        elif 'channel name' in i:
+            names = [i['channel name']]
+        else:
+            names = [f"File {idx+1}"]
+        channel_names.append(names)
 
     output_path, qc_path = validate_output_path(config['output full path'])
 
@@ -161,39 +179,68 @@ def run_palom(
     level
 ):
     ref_reader = reader.SvsReader(img_paths[0])
+    ref_color_proc = color.PyramidHaxProcessor(ref_reader.pyramid)
+    ref_thumbnail_level = max(ref_reader.level_downsamples)
 
-    aligners = []
+    block_affines = []
     for idx, p in enumerate(img_paths[1:]):
         logger.info(f"Processing {p.name}")
         moving_reader = reader.SvsReader(p)
+        moving_color_proc = color.PyramidHaxProcessor(moving_reader.pyramid)
+        moving_thumbnail_level = max(moving_reader.level_downsamples)
 
-        aligner = align.ReaderAligner(ref_reader, moving_reader, pyramid_level=level)
+        aligner = align.Aligner(
+            ref_color_proc.get_processed_color(level, 'grayscale'),
+            moving_color_proc.get_processed_color(level, 'grayscale'),
+            ref_color_proc.get_processed_color(ref_thumbnail_level, 'grayscale').compute(),
+            moving_color_proc.get_processed_color(moving_thumbnail_level, 'grayscale').compute(),
+            ref_reader.level_downsamples[ref_thumbnail_level] / ref_reader.level_downsamples[level],
+            moving_reader.level_downsamples[moving_thumbnail_level] / moving_reader.level_downsamples[level]
+        )
+
         aligner.coarse_register_affine()
-        plt.suptitle(f"L: {aligner.ref_reader.path.name}\nR: {p.name}")
-        plt.savefig(qc_path / f"{idx+1:02d}-{p.name}.png")
+        
+        # FIXME move the saving figure logic 
+        plt.suptitle(f"L: {ref_reader.path.name}\nR: {p.name}")
+        fig_w = max(plt.gca().get_xlim())
+        fig_h = max(plt.gca().get_ylim()) + 100
+        factor = 1600 / max(fig_w, fig_h)
+        plt.gcf().set_size_inches(fig_w*factor/72, fig_h*factor/72)
+        plt.tight_layout()
+        plt.savefig(qc_path / f"{idx+1:02d}-{p.name}.png", dpi=72)
+        plt.close()
+        
         aligner.compute_shifts()
         aligner.constrain_shifts()
 
-        aligners.append(aligner)
+        block_affines.append(aligner.block_affine_matrices_da)
     
-    m1 = align.ReaderAligner(
-        ref_reader, ref_reader, pyramid_level=level
-    ).get_ref_mosaic(mode=img_modes[0])
-    mosaics = [m1]
-    mosaics += [
-        a.get_aligned_mosaic(mode=m)
-        for a, m in zip(aligners, img_modes[1:])
-    ]
+    mosaics = []
+    m_ref = ref_color_proc.get_processed_color(level=level, mode=img_modes[0])
+    mosaics.append(m_ref)
+    for p, m, mx in zip(img_paths[1:], img_modes[1:], block_affines):
+        moving_color_proc = color.PyramidHaxProcessor(
+            reader.SvsReader(p).pyramid
+        )
+        m_moving = align.block_affine_transformed_moving_img(
+            ref_color_proc.get_processed_color(level),
+            moving_color_proc.get_processed_color(level, mode=m),
+            mx
+        )
+        mosaics.append(m_moving)
 
-    write_pyramid.write_pyramid(
-        mosaics, output_path,
+    if pixel_size is None:
+        pixel_size = ref_reader.pixel_size
+
+    pyramid.write_pyramid(
+        pyramid.normalize_mosaics(mosaics),
+        output_path,
         pixel_size=pixel_size,
         channel_names=channel_names
     )
     return 0
 
 
-@logger.catch
 def validate_output_path(out_path, overwrite=True):
     # write access
     out_img_path = pathlib.Path(out_path)

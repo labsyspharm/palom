@@ -37,17 +37,39 @@ class PyramidSetting:
         return math.ceil(math.log(factor, self.downscale_factor)) + 1
 
 
-def format_channel_names(mosaics, channel_names):
-    n_channels_each = [
-        count_num_channels([m])
-        for m in mosaics
+def format_channel_names(num_channels_each_mosaic, channel_names):
+    '''
+    format_channel_names(
+        [1, 2, 3, 4, 5], ['x', 'x', ['x'], ['x', 'x']]
+    )
+    >>> [
+        'x_1',
+        'x_2',
+        'x_3',
+        'x_4',
+        'x_5',
+        'x_6',
+        'Mosaic 4_1',
+        'Mosaic 4_2',
+        'Mosaic 4_3',
+        'Mosaic 4_4'
     ]
-    unique_names = make_unique_str(channel_names)
-    channel_names = [
-        [n]*c
-        for c, n in zip(n_channels_each, unique_names)
-    ]
-    return [n for l in channel_names for n in l]
+    '''
+    matched_channel_names = []
+    for idx, (n, c) in enumerate(
+        zip(channel_names, num_channels_each_mosaic)
+    ):
+        nl = n
+        if type(n) == str:
+            nl = [n] * c
+        if len(nl) == 1:
+            nl = nl * c
+        if len(nl) != c:
+            nl = [f"Mosaic {idx+1}"] * c
+        matched_channel_names.append(nl)
+    return make_unique_str(
+        [n for l in matched_channel_names for n in l]
+    )
 
 
 def make_unique_str(str_list):
@@ -65,6 +87,21 @@ def make_unique_str(str_list):
             ]
             str_np[str_np == n] = np.char.add(n, suffixes)
     return make_unique_str(list(str_np))
+
+
+def normalize_mosaics(mosaics):
+    dtypes = set(m.dtype for m in mosaics)
+    if any([np.issubdtype(d, np.floating) for d in dtypes]):
+        max_dtype = np.dtype(np.float32)
+    else:
+        max_dtype = max(dtypes)
+    normalized = []
+    for m in mosaics:
+        assert m.ndim == 2 or m.ndim == 3
+        if m.ndim == 2:
+            m = m[np.newaxis, :]
+        normalized.append(m.astype(max_dtype, copy=False))
+    return normalized
 
 
 def write_pyramid(
@@ -100,7 +137,11 @@ def write_pyramid(
     }
 
     if channel_names is not None:
-        names = format_channel_names(mosaics, channel_names)
+        num_channels_each_mosaic = [
+            count_num_channels([m])
+            for m in mosaics
+        ]
+        names = format_channel_names(num_channels_each_mosaic, channel_names)
         if len(names) == num_channels:
             metadata.update({
                 'Channel': {'Name': names},
@@ -154,13 +195,17 @@ def tile_from_combined_mosaics(mosaics, tile_shape):
     h, w = tile_shape
     n = len(mosaics)
     for idx, m in enumerate(mosaics):
-        # the performance is heavily degraded without pre-computing the mosaic
-        # channel
-        with tqdm.dask.TqdmCallback(
-            ascii=True, desc=f'Assembling mosaic {idx+1:2}/{n:2}',
-        ):
-            m = m.compute()
-        for c in m:
+        for cidx, c in enumerate(m):
+            # the performance is heavily degraded without pre-computing the
+            # mosaic channel
+            with tqdm.dask.TqdmCallback(
+                ascii=True,
+                desc=(
+                    f"Assembling mosaic {idx+1:2}/{n:2} (channel"
+                    f" {cidx+1:2}/{m.shape[0]:2})"
+                ),
+            ):
+                c = c.compute()
             for y in range(0, num_rows, h):
                 for x in range(0, num_cols, w):
                     yield np.array(c[y:y+h, x:x+w])

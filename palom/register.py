@@ -147,10 +147,11 @@ def feature_based_registration(
 
 
 def match_bf_fl_histogram(img1, img2):
-    img_pair = (img1, img2)
+    img1 = img1.astype(np.float32)
+    img2 = img2.astype(np.float32)
     bf1, bf2 = [
         True if i.max() <= 255 else False 
-        for i in img_pair
+        for i in (img1, img2)
     ]
     if bf1 == bf2:
         return img1, img2
