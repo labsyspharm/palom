@@ -103,6 +103,8 @@ class PyramidHaxProcessor(HaxProcessor):
         self.pyramid = pyramid
     
     def get_processed_color(self, level, mode='grayscale', out_dtype=None):
+        if mode == 'color':
+            return self.pyramid[level]
         rgb_img = np.moveaxis(self.pyramid[level], 0, 2)
         processed = super().get_processed_color(rgb_img, mode=mode)
         if out_dtype is None:
