@@ -38,3 +38,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 palom-svs = "palom.cli.svs:main"
+palom-svs-helper = "palom.cli.helper:main"
