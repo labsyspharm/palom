@@ -94,7 +94,7 @@ class OmePyramidReader(DaPyramidChannelReader):
         return 1
 
 
-class SvsReaderRe(DaPyramidChannelReader):
+class SvsReader(DaPyramidChannelReader):
 
     def __init__(self, path: str | pathlib.Path) -> None:
         self.path = pathlib.Path(path)
