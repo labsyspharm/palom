@@ -4,9 +4,11 @@ input dir: str()
 # Path to the output FILE, must end with .ome.tif or .ome.tiff
 output full path: include('output format')
 
-# Number indicating input image pixel size in µm [optional but recommended]
+# [optional]
+# Number indicating input image pixel size in µm
 pixel size: num(required=False)
 
+# [optional]
 # FOR DEV USE ONLY; Pyramid level to process, 0 is the lowest level pyramid
 pyramid level: num(required=False)
 
@@ -14,8 +16,9 @@ pyramid level: num(required=False)
 # image for other images to be aligned to
 reference image: include('image collection')
 
+# [optional]
 # Image object or list of image objects - imaging data file(s) to be aligned to
-# the reference image [optional]
+# the reference image
 moving images: list(include('image collection'), required=False)
 
 ---
@@ -26,7 +29,8 @@ _image_base: &_image_base
     # Filename or the remaining path to the imaging data relative to the input
     # dir field 
     filename: str()
-    # Channel name in the output ome-tiff [optional but recommended]
+    # [optional but recommended]
+    # Channel name in the output ome-tiff
     channel name: str(required=False)
     channel names: list(str(), min=1, required=False)
 
