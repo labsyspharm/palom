@@ -12,17 +12,21 @@ class HaxProcessor:
     def __init__(
         self,
         rgb_img: da.Array,
-        channel_axis: int = 0
+        channel_axis: int = 0,
+        contrast_ref_img: da.Array | np.array = None
     ) -> None:
         self.rgb_img = np.moveaxis(rgb_img, channel_axis, 2)
+        if contrast_ref_img is None:
+            self.contrast_ref_img = self.rgb_img
+        else:
+            self.contrast_ref_img = np.moveaxis(contrast_ref_img, channel_axis, 2)
         assert self.rgb_img.ndim == 3, (
             f"`rgb_img` must be 3D, preferably in (C, Y, X) order"
         )
-        assert self.rgb_img.shape[2] == 3
-        self.make_thumbnail()
-
-    def make_thumbnail(self):
-        self.thumbnail = self.rgb_img
+        assert self.contrast_ref_img.ndim == 3, (
+            f"`contrast_ref_img` must be 3D, preferably in (C, Y, X) order"
+        )
+        assert self.rgb_img.shape[2] == self.contrast_ref_img.shape[2] == 3
 
     def find_processed_color_contrast_range(self, mode: str):
         assert mode in ['grayscale', 'hematoxylin', 'aec']
@@ -31,13 +35,15 @@ class HaxProcessor:
         if hasattr(self, mode_range):
             return getattr(self, mode_range)
         
-        thumbnail = self.thumbnail
+        contrast_ref_img = self.contrast_ref_img
+        if isinstance(contrast_ref_img, da.Array):
+            contrast_ref_img = contrast_ref_img.compute()
         if mode == 'grayscale':
-            img = self.rgb2gray(thumbnail)
+            img = self.rgb2gray(contrast_ref_img)
         elif mode == 'hematoxylin':
-            img = self.rgb2hematoxylin(thumbnail)
+            img = self.rgb2hematoxylin(contrast_ref_img)
         elif mode == 'aec':
-            img = self.rgb2aec(thumbnail)
+            img = self.rgb2aec(contrast_ref_img)
 
         setattr(self, mode_range, (
             img.min(), img.max()
@@ -95,7 +101,6 @@ class PyramidHaxProcessor(HaxProcessor):
             thumbnail_level = len(pyramid) - 1
         super().__init__(pyramid[thumbnail_level], channel_axis=0)
         self.pyramid = pyramid
-        self.thumbnail = self.thumbnail.compute()
     
     def get_processed_color(self, level, mode='grayscale', out_dtype=None):
         rgb_img = np.moveaxis(self.pyramid[level], 0, 2)
