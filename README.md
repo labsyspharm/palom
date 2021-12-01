@@ -180,17 +180,19 @@ import palom
 c1r = palom.reader.SvsReader(r'Y:\DATA\SARDANA\MIHC\75684\GG_TNP_75684_D21_C11R3_HEM.svs')
 c2r = palom.reader.SvsReader(r'Y:\DATA\SARDANA\MIHC\75684\GG_TNP_75684_D23_C01R1_PD1.svs')
 
-c1rp = palom.color.PyramidHaxProcessor(c1r.pyramid, thumbnail_level=2)
-c2rp = palom.color.PyramidHaxProcessor(c2r.pyramid, thumbnail_level=2)
-
 LEVEL = 1
+THUMBNAIL_LEVEL = 2
+
+c1rp = palom.color.PyramidHaxProcessor(c1r.pyramid, thumbnail_level=THUMBNAIL_LEVEL)
+c2rp = palom.color.PyramidHaxProcessor(c2r.pyramid, thumbnail_level=THUMBNAIL_LEVEL)
+
 c21l = palom.align.Aligner(
     c1rp.get_processed_color(LEVEL), 
     c2rp.get_processed_color(LEVEL),
-    ref_thumbnail=c1rp.get_processed_color(2).compute(),
-    moving_thumbnail=c2rp.get_processed_color(2).compute(),
-    ref_thumbnail_down_factor=c1r.level_downsamples[2] / c1r.level_downsamples[LEVEL],
-    moving_thumbnail_down_factor=c2r.level_downsamples[2] / c2r.level_downsamples[LEVEL]
+    ref_thumbnail=c1rp.get_processed_color(THUMBNAIL_LEVEL).compute(),
+    moving_thumbnail=c2rp.get_processed_color(THUMBNAIL_LEVEL).compute(),
+    ref_thumbnail_down_factor=c1r.level_downsamples[THUMBNAIL_LEVEL] / c1r.level_downsamples[LEVEL],
+    moving_thumbnail_down_factor=c2r.level_downsamples[THUMBNAIL_LEVEL] / c2r.level_downsamples[LEVEL]
 )
 
 c21l.coarse_register_affine()
@@ -207,7 +209,8 @@ c2m = palom.align.block_affine_transformed_moving_img(
 
 palom.pyramid.write_pyramid(
     palom.pyramid.normalize_mosaics([c2m]),
-    r"Y:\DATA\SARDANA\MIHC\75684\mosaic.ome.tif"
+    r"Y:\DATA\SARDANA\MIHC\75684\mosaic.ome.tif",
+    pixel_size=c1r.pixel_size*c1r.level_downsamples[LEVEL],
 )
 ```
 
@@ -220,13 +223,15 @@ c1r = palom.reader.OmePyramidReader(r"Z:\P37_Pilot2\P37_S12_Full.ome.tiff")
 c2r = palom.reader.OmePyramidReader(r"Z:\P37_Pilot2\HE\P37_S12_E033_93_HE.ome.tiff")
 
 LEVEL = 1
+THUMBNAIL_LEVEL = 3
+
 c21l = palom.align.Aligner(
     c1r.read_level_channels(LEVEL, 0),
     c2r.read_level_channels(LEVEL, 1),
-    c1r.read_level_channels(3, 0).compute(),
-    c2r.read_level_channels(3, 1).compute(),
-    c1r.level_downsamples[3] / c1r.level_downsamples[LEVEL],
-    c2r.level_downsamples[3] / c2r.level_downsamples[LEVEL]
+    c1r.read_level_channels(THUMBNAIL_LEVEL, 0).compute(),
+    c2r.read_level_channels(THUMBNAIL_LEVEL, 1).compute(),
+    c1r.level_downsamples[THUMBNAIL_LEVEL] / c1r.level_downsamples[LEVEL],
+    c2r.level_downsamples[THUMBNAIL_LEVEL] / c2r.level_downsamples[LEVEL]
 )
 
 c21l.coarse_register_affine(n_keypoints=4000)
@@ -244,6 +249,7 @@ palom.pyramid.write_pyramid(
         c1r.read_level_channels(LEVEL, [0, 1, 2]),
         c2m
     ]),
-    r"Z:\P37_Pilot2\mosaic.ome.tif"
+    r"Z:\P37_Pilot2\mosaic.ome.tif",
+    pixel_size=c1r.pixel_size*c1r.level_downsamples[LEVEL]
 )
 ```
