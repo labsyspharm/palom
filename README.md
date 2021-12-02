@@ -1,5 +1,5 @@
 <h2>
-    <img alt="palom" height="60" src="https://github.com/Yu-AnChen/palom/blob/main/palom-logo.svg">
+    <img alt="palom" height="60" src="palom-logo.svg">
     <br>
     Piecewise alignment for layers of mosaics
 </h2>
