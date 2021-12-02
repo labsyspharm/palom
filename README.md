@@ -1,4 +1,8 @@
-# Piecewise alignment for layers of mosaics
+<h2>
+    <img alt="palom" height="60" src="https://github.com/Yu-AnChen/palom/blob/main/palom-logo.svg">
+    <br>
+    Piecewise alignment for layers of mosaics
+</h2>
 
 Palom started as a tool for registering [whole-slide
 images](https://en.wikipedia.org/wiki/Digital_pathology) of the same [FFPE
