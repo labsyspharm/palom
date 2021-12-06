@@ -29,7 +29,7 @@ class HaxProcessor:
         assert self.rgb_img.shape[2] == self.contrast_ref_img.shape[2] == 3
 
     def find_processed_color_contrast_range(self, mode: str):
-        assert mode in ['grayscale', 'hematoxylin', 'aec']
+        assert mode in ['grayscale', 'hematoxylin', 'aec', 'dab']
         
         mode_range = f'_{mode}_range'
         if hasattr(self, mode_range):
@@ -38,19 +38,16 @@ class HaxProcessor:
         contrast_ref_img = self.contrast_ref_img
         if isinstance(contrast_ref_img, da.Array):
             contrast_ref_img = contrast_ref_img.compute()
-        if mode == 'grayscale':
-            img = self.rgb2gray(contrast_ref_img)
-        elif mode == 'hematoxylin':
-            img = self.rgb2hematoxylin(contrast_ref_img)
-        elif mode == 'aec':
-            img = self.rgb2aec(contrast_ref_img)
+        
+        process_func = self.__getattribute__(f"rgb2{mode}")
+        img = process_func(contrast_ref_img)
 
         setattr(self, mode_range, (
             img.min(), img.max()
         ))
         return getattr(self, mode_range)
 
-    def rgb2gray(self, rgb_img):
+    def rgb2grayscale(self, rgb_img):
         import cv2
         return cv2.cvtColor(rgb_img, cv2.COLOR_BGR2GRAY)
         # return skimage.color.rgb2gray(rgb_img).astype(np.float32)
@@ -58,20 +55,18 @@ class HaxProcessor:
     def rgb2aec(self, rgb_img):
         return extract.rgb2aec(rgb_img).astype(np.float32)
 
+    def rgb2dab(self, rgb_img):
+        hdx = skimage.color.separate_stains(rgb_img, skimage.color.hdx_from_rgb)
+        return hdx[..., 1].astype(np.float32)
+
     def rgb2hematoxylin(self, rgb_img):
         hax = skimage.color.separate_stains(rgb_img, skimage.color.hax_from_rgb)
         return hax[..., 0].astype(np.float32)
 
     def get_processed_color(self, rgb_img, mode='grayscale'):
-        assert mode in ['grayscale', 'hematoxylin', 'aec']
+        assert mode in ['grayscale', 'hematoxylin', 'aec', 'dab']
 
-        if mode == 'grayscale':
-            process_func = self.rgb2gray
-        elif mode == 'hematoxylin':
-            process_func = self.rgb2hematoxylin
-        elif mode == 'aec':
-            process_func = self.rgb2aec
-
+        process_func = self.__getattribute__(f"rgb2{mode}")
         intensity_range = self.find_processed_color_contrast_range(mode)
         
         processed = da.map_blocks(

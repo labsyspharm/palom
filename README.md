@@ -48,8 +48,8 @@ python -m pip install palom
 ### Configuration YAML file
 
 Palom CLI tool merges multiple SVS files into a pyramidal OME-TIFF file, with
-the option to perform preset stain separation (4 modes are available - `output
-mode`: `hematoxylin`, `aec`, `grayscale`, `color`)
+the option to perform preset stain separation (5 modes are available - `output
+mode`: `hematoxylin`, `aec`, `dab`, `grayscale`, `color`)
 
 A user-defined configuration YAML file is required for the run. A configuration
 example can be printed to the console by running
