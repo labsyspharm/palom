@@ -59,6 +59,13 @@ class DaPyramidChannelReader:
     def pixel_dtype(self) -> np.dtype:
         return self.pyramid[0].dtype
 
+    def get_thumbnail_level_of_size(self, size: float) -> int:
+        shapes = [
+            np.abs(np.mean(level.shape[1:3]) - size)
+            for level in self.pyramid
+        ]
+        return np.argmin(shapes)
+
 
 class OmePyramidReader(DaPyramidChannelReader):
 

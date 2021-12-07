@@ -11,6 +11,7 @@ from .. import reader, align, pyramid, color
 from .. import __version__ as _version
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 logger.remove()  # All configured handlers are removed
@@ -180,14 +181,14 @@ def run_palom(
 ):
     ref_reader = reader.SvsReader(img_paths[0])
     ref_color_proc = color.PyramidHaxProcessor(ref_reader.pyramid)
-    ref_thumbnail_level = max(ref_reader.level_downsamples)
+    ref_thumbnail_level = ref_reader.get_thumbnail_level_of_size(2500)
 
     block_affines = []
     for idx, p in enumerate(img_paths[1:]):
         logger.info(f"Processing {p.name}")
         moving_reader = reader.SvsReader(p)
         moving_color_proc = color.PyramidHaxProcessor(moving_reader.pyramid)
-        moving_thumbnail_level = max(moving_reader.level_downsamples)
+        moving_thumbnail_level = moving_reader.get_thumbnail_level_of_size(2500)
 
         aligner = align.Aligner(
             ref_color_proc.get_processed_color(level, 'grayscale'),
