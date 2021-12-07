@@ -186,6 +186,9 @@ def run_palom(
     block_affines = []
     for idx, p in enumerate(img_paths[1:]):
         logger.info(f"Processing {p.name}")
+        if p == img_paths[0]:
+            block_affines.append(np.eye(3))
+            continue
         moving_reader = reader.SvsReader(p)
         moving_color_proc = color.PyramidHaxProcessor(moving_reader.pyramid)
         moving_thumbnail_level = moving_reader.get_thumbnail_level_of_size(2500)
