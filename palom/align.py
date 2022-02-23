@@ -140,10 +140,15 @@ class Aligner:
     @property
     def affine_matrix(self):
         if not hasattr(self, 'coarse_affine_matrix'):
-            self.coarse_register_affine()  
-        coarse_factor = self.ref_thumbnail_down_factor
-        affine_matrix = self.coarse_affine_matrix.copy()
-        affine_matrix[:2, 2] *= coarse_factor
+            self.coarse_register_affine()
+        affine = skimage.transform.AffineTransform
+        mx_ref = affine(scale=1/self.ref_thumbnail_down_factor).params
+        mx_moving = affine(scale=1/self.moving_thumbnail_down_factor).params
+        affine_matrix = (
+            np.linalg.inv(mx_ref) @
+            self.coarse_affine_matrix.copy() @
+            mx_moving
+        )
         return affine_matrix
     
     @property
