@@ -11,33 +11,23 @@ class HaxProcessor:
 
     def __init__(
         self,
-        rgb_img: da.Array,
+        contrast_ref_img: da.Array | np.array,
         channel_axis: int = 0,
-        contrast_ref_img: da.Array | np.array = None
     ) -> None:
-        self.rgb_img = np.moveaxis(rgb_img, channel_axis, 2)
-        if contrast_ref_img is None:
-            self.contrast_ref_img = self.rgb_img
-        else:
-            self.contrast_ref_img = np.moveaxis(contrast_ref_img, channel_axis, 2)
-        assert self.rgb_img.ndim == 3, (
-            f"`rgb_img` must be 3D, preferably in (C, Y, X) order"
-        )
+        self.contrast_ref_img = np.moveaxis(contrast_ref_img, channel_axis, 2)
         assert self.contrast_ref_img.ndim == 3, (
             f"`contrast_ref_img` must be 3D, preferably in (C, Y, X) order"
         )
-        assert self.rgb_img.shape[2] == self.contrast_ref_img.shape[2] == 3
 
     def find_processed_color_contrast_range(self, mode: str):
-        assert mode in ['grayscale', 'hematoxylin', 'aec', 'dab']
+        supported_modes = ['grayscale', 'hematoxylin', 'aec', 'dab']
+        assert mode in supported_modes
         
         mode_range = f'_{mode}_range'
         if hasattr(self, mode_range):
             return getattr(self, mode_range)
         
-        contrast_ref_img = self.contrast_ref_img
-        if isinstance(contrast_ref_img, da.Array):
-            contrast_ref_img = contrast_ref_img.compute()
+        contrast_ref_img = self.contrast_img
         
         process_func = self.__getattribute__(f"rgb2{mode}")
         img = process_func(contrast_ref_img)
@@ -46,6 +36,15 @@ class HaxProcessor:
             img.min(), img.max()
         ))
         return getattr(self, mode_range)
+
+    @property
+    def contrast_img(self):
+        if hasattr(self, '_contrast_img'):
+            return self._contrast_img
+        self._contrast_img = self.contrast_ref_img
+        if isinstance(self._contrast_img, da.Array):
+            self._contrast_img = self._contrast_img.compute()
+        return self._contrast_img
 
     def rgb2grayscale(self, rgb_img):
         import cv2
