@@ -84,7 +84,7 @@ def block_affine(
     )
     warped_src_img_block = cv2.warpAffine(
         src_img_block, block_tform.params[:2, :],
-        (width, height)
+        (width, height), flags=cv2.INTER_AREA
     )
     if multichannel:
         # shape multichannel image as (C, Y, X)
