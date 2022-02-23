@@ -9,6 +9,8 @@ import warnings
 
 from loguru import logger
 
+from . import pyramid as pyramid_util
+
 
 class DaPyramidChannelReader:
 
@@ -21,14 +23,16 @@ class DaPyramidChannelReader:
         self.channel_axis = channel_axis
         if self.validate_pyramid(self.pyramid, self.channel_axis):
             self.pyramid = self.normalize_axis_order()
+            self.pyramid = self.auto_format_pyramid(self.pyramid)
 
     @staticmethod
     def validate_pyramid(pyramid: list[da.Array], channel_axis:int) -> bool:
         for i, level in enumerate(pyramid):
             assert level.ndim == 3, ''
             if np.argmin(level.shape) != channel_axis:
-                warnings.warn(
-                    f"level {i} has shape of {level.shape} while given" f" `channel_axis` is {channel_axis}"
+                logger.warning(
+                    f"level {i} has shape of {level.shape} while given" 
+                    f" `channel_axis` is {channel_axis}"
                 )
         return True
     
@@ -47,6 +51,32 @@ class DaPyramidChannelReader:
     ) -> da.Array:
         target_level = self.pyramid[level]
         return target_level[channels]
+
+    @staticmethod
+    def auto_format_pyramid(
+        pyramid: list[da.Array],
+    ) -> list[da.Array]:
+        first = pyramid[0]
+        if len(pyramid) > 1: return pyramid
+        # Assumption: if the image is pyramidal, it must also be tiled
+        if max(first.shape) < 1024: return pyramid
+        logger.warning(
+                f'Unable to detect pyramid levels, it may take a while'
+                f' to compute thumbnails during coarse alignment'
+            )
+        if first.numblocks[1:3] == (1, 1):
+            first = first.rechunk((1, 1024, 1024))
+        pyramid_setting = pyramid_util.PyramidSetting(downscale_factor=2)
+        num_levels = pyramid_setting.num_levels(first.shape[1:3])
+        return [
+            da.coarsen(
+                np.mean,
+                first,
+                {0:1, 1:2**i, 2:2**i},
+                trim_excess=True
+            ).astype(first.dtype)
+            for i in range(num_levels)
+        ]
 
     @property
     def level_downsamples(self) -> dict[int, int]:
