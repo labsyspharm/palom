@@ -33,10 +33,12 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs):
         ])
 
 
-def block_shifts(ref_img, moving_img):
+def block_shifts(ref_img, moving_img, pcc_kwargs=None):
+    if pcc_kwargs is None:
+        pcc_kwargs = dict(sigma=0, upsample=1)
     return da.map_blocks(
         lambda a, b: np.atleast_2d(
-            register.phase_cross_correlation(a, b, sigma=0, upsample=1)[0]
+            register.phase_cross_correlation(a, b, **pcc_kwargs)[0]
         ),
         ref_img,
         moving_img,
@@ -160,11 +162,11 @@ class Aligner:
             ref_img, moving_img, mxs
         )
     
-    def compute_shifts(self):
+    def compute_shifts(self, pcc_kwargs=None):
         logger.info(f"Computing block-wise shifts")
         ref_img = self.ref_img
         moving_img = self.affine_transformed_moving_img(self.affine_matrix)
-        shifts_da = block_shifts(ref_img, moving_img)
+        shifts_da = block_shifts(ref_img, moving_img, pcc_kwargs=pcc_kwargs)
         with tqdm.dask.TqdmCallback(
             ascii=True, desc='Computing shifts',
         ):
