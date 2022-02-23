@@ -93,6 +93,11 @@ class OmePyramidReader(DaPyramidChannelReader):
                     da_level = da.from_zarr(z[0])
                 else:
                     da_level = da.from_zarr(z)
+                if da_level.ndim == 2:
+                    da_level = da_level.reshape(1, *da_level.shape)
+                if da_level.ndim == 3:
+                    if da_level.shape[2] in (3, 4):
+                        da_level = da.moveaxis(da_level, 2, 0)
                 da_pyramid.append(da_level)
             return da_pyramid
 
