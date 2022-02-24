@@ -154,7 +154,7 @@ def match_bf_fl_histogram(img1, img2):
         for i in (img1, img2)
     ]
     if bf1 == bf2:
-        return img1, img2
+        return img1, skimage.exposure.match_histograms(img2, img1)
     elif bf1 is True:
         return img1, skimage.exposure.match_histograms(-img2, img1)
     elif bf2 is True:
