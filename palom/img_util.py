@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
-
+import skimage.transform
+import skimage.filters
 
 def cv2_pyramid(img, max_size=1024):
     size_max = np.array(img.shape).max()
@@ -39,3 +40,19 @@ def is_single_channel(img):
     is_2d = img.ndim == 2
     is_flat_3d = img.ndim == 3 and img.shape[0] == 1
     return is_2d or is_flat_3d
+
+
+def entropy_mask(img, kernel_size=9):
+    img = skimage.exposure.rescale_intensity(
+        img, out_range=np.uint8
+    ).astype(np.uint8)
+    entropy = skimage.filters.rank.entropy(img, np.ones((kernel_size, kernel_size)))
+    return entropy > skimage.filters.threshold_otsu(entropy)
+
+
+def is_brightfield_img(img, max_size=100):
+    downscale_factor = int(max(img.shape) / max_size)
+    thumbnail = skimage.transform.downscale_local_mean(img, (downscale_factor, downscale_factor))
+    mask = entropy_mask(thumbnail)
+    # is using mean better?
+    return np.median(thumbnail[mask]) < np.median(thumbnail[~mask])

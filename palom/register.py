@@ -96,7 +96,7 @@ def feature_based_registration(
     plot_individual_result=False, ransacReprojThreshold=5
 ):
     compare_funcs = [
-        np.greater if i.max() > 255 else np.less
+        np.less if img_util.is_brightfield_img(i) else np.greater
         for i in (img_left, img_right)
     ]
     imgs_otsu = [
@@ -150,7 +150,7 @@ def match_bf_fl_histogram(img1, img2):
     img1 = img1.astype(np.float32)
     img2 = img2.astype(np.float32)
     bf1, bf2 = [
-        True if i.max() <= 255 else False 
+        img_util.is_brightfield_img(i) 
         for i in (img1, img2)
     ]
     if bf1 == bf2:
