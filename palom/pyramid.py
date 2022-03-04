@@ -110,14 +110,16 @@ def write_pyramid(
     pixel_size=1,
     channel_names=None,
     verbose=True,
+    downscale_factor=4
 ):
     ref_m = mosaics[0]
     path = output_path
     num_channels = count_num_channels(mosaics)
     base_shape = ref_m.shape[1:3]
-    downscale_factor = 4
+    assert int(downscale_factor) == downscale_factor
+    assert downscale_factor < min(base_shape)
     pyramid_setting = PyramidSetting(
-        downscale_factor=downscale_factor,
+        downscale_factor=int(downscale_factor),
         tile_size=max(ref_m.chunksize)
     )
     num_levels = pyramid_setting.num_levels(base_shape)
