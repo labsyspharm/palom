@@ -218,7 +218,7 @@ palom.pyramid.write_pyramid(
 )
 ```
 
-### For OME-TIFF files
+### For TIFF and OME-TIFF files
 
 ```python
 import palom
