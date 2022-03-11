@@ -223,37 +223,65 @@ palom.pyramid.write_pyramid(
 ```python
 import palom
 
+# reference image is a multichannel immunofluoroscence imaging
 c1r = palom.reader.OmePyramidReader(r"Z:\P37_Pilot2\P37_S12_Full.ome.tiff")
+# moving image is a brightfield imaging (H&E staining) of the same tissue
+# section the as reference image; 
 c2r = palom.reader.OmePyramidReader(r"Z:\P37_Pilot2\HE\P37_S12_E033_93_HE.ome.tiff")
 
+# use second-to-the-bottom pyramid level for a quick test; set `LEVEL = 0` for
+# processing lowest level pyramid (full resolution)
 LEVEL = 1
+# choose thumbnail pyramid level for feature-based affine registration as
+# initial coarse alignment
+# if don't know which level to use for thumbnail, `THUMBNAIL_LEVEL =
+# c1r.get_thumbnail_level_of_size(2000)` could be a good starting point
 THUMBNAIL_LEVEL = 3
 
 c21l = palom.align.Aligner(
-    c1r.read_level_channels(LEVEL, 0),
-    c2r.read_level_channels(LEVEL, 1),
-    c1r.read_level_channels(THUMBNAIL_LEVEL, 0).compute(),
-    c2r.read_level_channels(THUMBNAIL_LEVEL, 1).compute(),
-    c1r.level_downsamples[THUMBNAIL_LEVEL] / c1r.level_downsamples[LEVEL],
-    c2r.level_downsamples[THUMBNAIL_LEVEL] / c2r.level_downsamples[LEVEL]
+    # use the first channel (Hoechst staining) in the reference image as
+    # reference
+    ref_img=c1r.read_level_channels(LEVEL, 0),
+    # use the second channel (G channel) in the moving image, it usually has
+    # better contrast
+    moving_img=c2r.read_level_channels(LEVEL, 1),
+    # select the same channels for the thumbnail images
+    ref_thumbnail=c1r.read_level_channels(THUMBNAIL_LEVEL, 0).compute(),
+    moving_thumbnail=c2r.read_level_channels(THUMBNAIL_LEVEL, 1).compute(),
+    # specify the downsizing factors so that the affine matrix can be scaled
+    # back to the pyramid at `LEVEL`
+    ref_thumbnail_down_factor=c1r.level_downsamples[THUMBNAIL_LEVEL] / c1r.level_downsamples[LEVEL],
+    moving_thumbnail_down_factor=c2r.level_downsamples[THUMBNAIL_LEVEL] / c2r.level_downsamples[LEVEL]
 )
 
+# run feature-based affine registration using thumbnails
 c21l.coarse_register_affine(n_keypoints=4000)
+# after coarsly affine registered, run phase correlation on each of the
+# corresponding chunks (blocks/pieces) to refine translations
 c21l.compute_shifts()
+# discard incorrect shifts which is usually due to low contrast in the
+# background regions; this is needed for WSI but maybe not for ROI images
 c21l.constrain_shifts()
 
+# configure the transformation of aligning the moving image to the reference
+# image
 c2m = palom.align.block_affine_transformed_moving_img(
-    c1r.read_level_channels(LEVEL, 0),
-    c2r.pyramid[LEVEL],
+    ref_img=c1r.read_level_channels(LEVEL, 0),
+    # select all the three channels (RGB) in moving image to transform
+    moving_img=c2r.pyramid[LEVEL],
     mxs=c21l.block_affine_matrices_da
 )
 
+# write the registered images to a pyramidal ome-tiff
 palom.pyramid.write_pyramid(
-    palom.pyramid.normalize_mosaics([
+    mosaics=palom.pyramid.normalize_mosaics([
+        # select only the first three channels in referece image to be written
+        # to the output ome-tiff; for writing all channels, use
+        # `c1r.pyramid[LEVEL]` instead
         c1r.read_level_channels(LEVEL, [0, 1, 2]),
         c2m
     ]),
-    r"Z:\P37_Pilot2\mosaic.ome.tif",
+    output_path=r"Z:\P37_Pilot2\mosaic.ome.tif",
     pixel_size=c1r.pixel_size*c1r.level_downsamples[LEVEL]
 )
 ```
