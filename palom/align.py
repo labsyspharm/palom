@@ -19,7 +19,7 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs):
                 block_affine.block_affine_dask,
                 src_array=moving_img
             ),
-            affine_matrix=mxs,
+            mxs,
             chunks=ref_img.chunks,
             dtype=moving_img.dtype
         )
@@ -30,7 +30,7 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs):
                     block_affine.block_affine_dask,
                     src_array=c
                 ),
-                affine_matrix=mxs,
+                mxs,
                 chunks=ref_img.chunks,
                 dtype=moving_img.dtype
             )
