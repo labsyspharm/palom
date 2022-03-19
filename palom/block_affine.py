@@ -7,7 +7,7 @@ import itertools
 
 def block_affine_dask(
     affine_matrix,
-    src_array=None,
+    src_array,
     fill_empty=0,
     multichannel=False,
     block_info=None,
@@ -83,7 +83,7 @@ def block_affine(
         shear=transformation.shear
     )
     warped_src_img_block = cv2.warpAffine(
-        src_img_block, block_tform.params[:2, :],
+        np.asarray(src_img_block), block_tform.params[:2, :],
         (width, height), flags=cv2.INTER_AREA
     )
     if multichannel:

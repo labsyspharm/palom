@@ -1,3 +1,4 @@
+import functools
 import numpy as np
 import dask.array as da
 import skimage.exposure
@@ -14,20 +15,24 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs):
     assert img_util.is_single_channel(ref_img)
     if img_util.is_single_channel(moving_img) and moving_img.ndim == 2:
         return da.map_blocks(
-            block_affine.block_affine_dask,
-            mxs,
+            functools.partial(
+                block_affine.block_affine_dask,
+                src_array=moving_img
+            ),
+            affine_matrix=mxs,
             chunks=ref_img.chunks,
-            dtype=moving_img.dtype,
-            src_array=moving_img
+            dtype=moving_img.dtype
         )
     else:
         return da.array([
             da.map_blocks(
-                block_affine.block_affine_dask,
-                mxs,
+                functools.partial(
+                    block_affine.block_affine_dask,
+                    src_array=c
+                ),
+                affine_matrix=mxs,
                 chunks=ref_img.chunks,
-                dtype=moving_img.dtype,
-                src_array=c
+                dtype=moving_img.dtype
             )
             for c in moving_img
         ])
