@@ -11,28 +11,38 @@ from . import block_affine
 from . import img_util
 
 
-def block_affine_transformed_moving_img(ref_img, moving_img, mxs):
+def block_affine_transformed_moving_img(
+    ref_img, moving_img, mxs, save_RAM=False
+):
     assert img_util.is_single_channel(ref_img)
+    _map_kwargs = dict(
+        chunks=ref_img.chunks,
+        dtype=moving_img.dtype
+    )
     if img_util.is_single_channel(moving_img) and moving_img.ndim == 2:
-        return da.map_blocks(
-            functools.partial(
+        if save_RAM:
+            # pass moving_img as dask array to save RAM usage in the cost of
+            # longer runtime
+            map_kwargs = {**_map_kwargs}
+            map_func = functools.partial(
                 block_affine.block_affine_dask,
                 src_array=moving_img
-            ),
+            )
+        else:
+            # pass moving_img as a kwarg when calling da.map_blocks so that
+            # moving_img will be persisted as numpy array when executing the
+            # mapping function
+            map_kwargs = {**_map_kwargs, **dict(src_array=moving_img)}
+            map_func = block_affine.block_affine_dask
+        return da.map_blocks(
+            map_func,
             mxs,
-            chunks=ref_img.chunks,
-            dtype=moving_img.dtype
+            **map_kwargs
         )
     else:
         return da.array([
-            da.map_blocks(
-                functools.partial(
-                    block_affine.block_affine_dask,
-                    src_array=c
-                ),
-                mxs,
-                chunks=ref_img.chunks,
-                dtype=moving_img.dtype
+            block_affine_transformed_moving_img(
+                ref_img, c, mxs, save_RAM=save_RAM
             )
             for c in moving_img
         ])
