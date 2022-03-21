@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "palom"
-version = "2022.3.1"
+version = "2022.3.2"
 description = "Piecewise alignment for layers of mosaics"
 authors = ["Yu-An Chen <atwood12@gmail.com>"]
 readme = "README.md"
