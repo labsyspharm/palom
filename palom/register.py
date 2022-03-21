@@ -149,15 +149,15 @@ def feature_based_registration(
 def match_bf_fl_histogram(img1, img2):
     img1 = img1.astype(np.float32)
     img2 = img2.astype(np.float32)
-    bf1, bf2 = [
+    is_bf_img1, is_bf_img2 = [
         img_util.is_brightfield_img(i) 
         for i in (img1, img2)
     ]
-    if bf1 == bf2:
+    if is_bf_img1 == is_bf_img2:
         return img1, skimage.exposure.match_histograms(img2, img1)
-    elif bf1 is True:
+    elif is_bf_img1:
         return img1, skimage.exposure.match_histograms(-img2, img1)
-    elif bf2 is True:
+    elif is_bf_img2:
         return skimage.exposure.match_histograms(-img1, img2), img2
 
 
