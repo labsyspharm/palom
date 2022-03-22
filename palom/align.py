@@ -88,7 +88,7 @@ def block_affine_matrices(mx, shifts):
         y, x = shift
         mx_shift = np.eye(3)
         mx_shift[:2, 2] = x, y
-        return mx @ mx_shift
+        return mx_shift @ mx
 
     mxs = [
         shift_affine_mx(mx, s)
