@@ -172,21 +172,26 @@ class Aligner:
             matrix=self.affine_matrix
         )
     
-    def affine_transformed_moving_img(self, mxs=None):
+    def affine_transformed_moving_img(self, mxs=None, save_RAM=False):
         if mxs is None:
             mxs = self.affine_matrix
         ref_img = self.ref_img
         moving_img = self.moving_img
 
         return block_affine_transformed_moving_img(
-            ref_img, moving_img, mxs
+            ref_img, moving_img, mxs, save_RAM=save_RAM
         )
     
+    def shifts_da(self, save_RAM=False, pcc_kwargs=None):
+        ref_img = self.ref_img
+        moving_img = self.affine_transformed_moving_img(
+            self.affine_matrix, save_RAM=save_RAM
+        )
+        return block_shifts(ref_img, moving_img, pcc_kwargs=pcc_kwargs)
+
     def compute_shifts(self, pcc_kwargs=None):
         logger.info(f"Computing block-wise shifts")
-        ref_img = self.ref_img
-        moving_img = self.affine_transformed_moving_img(self.affine_matrix)
-        shifts_da = block_shifts(ref_img, moving_img, pcc_kwargs=pcc_kwargs)
+        shifts_da = self.shifts_da(pcc_kwargs=pcc_kwargs)
         with tqdm.dask.TqdmCallback(
             ascii=True, desc='Computing shifts',
         ):
@@ -221,3 +226,40 @@ class Aligner:
             self.block_affine_matrices,
             self.grid_shape
         )
+
+    def debug(self, idx, pcc_kwargs=None):
+        if type(idx) == int:
+            idx = np.unravel_index(idx, self.grid_shape)
+        row_idx, col_idx = idx
+        shift = (
+            self.shifts_da(pcc_kwargs=pcc_kwargs, save_RAM=True)
+                .blocks[row_idx, col_idx]
+                .compute()
+        )
+        affine_mx = block_affine_matrices(self.affine_matrix, shift)[0]
+        
+        img1 = self.ref_img
+        img2 = self.affine_transformed_moving_img(save_RAM=True)
+        img3 = self.affine_transformed_moving_img(mxs=affine_mx, save_RAM=True)
+
+        return [
+            img.blocks[row_idx, col_idx]
+            for img in (img1, img2, img3)
+        ]
+
+    def overlay_grid(self):
+        import matplotlib.pyplot as plt
+        shape = self.grid_shape
+        grid = np.arange(np.multiply(*shape)).reshape(shape)
+        h, w = np.divide(
+            self.ref_thumbnail.shape,
+            np.divide(self.ref_img.chunksize, self.ref_thumbnail_down_factor)
+        )
+        plt.figure()
+        plt.imshow(
+            np.sqrt(np.abs(self.ref_thumbnail)),
+            cmap='Greys_r',
+            extent=(-0.5, w-0.5, h-0.5, -0.5)
+        )
+        plt.imshow((grid % 2) == 0, cmap='cool', alpha=0.2)
+        return grid
