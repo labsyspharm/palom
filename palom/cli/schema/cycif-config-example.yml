@@ -1,0 +1,17 @@
+input dir: Y:/user/me/projects/data/cycif
+output full path: Y:/user/me/projects/analysis/cycif/2022/example-output.ome.tiff
+
+pixel size: 0.325
+
+reference image:
+    filename: 20220413/example_input_cycle_1.tif
+    channel names: DAPI, FITC, Cy3, Cy5
+    output mode: multichannel
+
+moving images:
+- filename: 20220413/example_input_cycle_2.tif
+  channel names: DAPI, FITC, Cy3, Cy5
+  output mode: multichannel
+- filename: 20220413/example_input_cycle_3.tif
+  channel names: DAPI, FITC, Cy3, Cy5
+  output mode: multichannel
