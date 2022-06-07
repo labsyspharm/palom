@@ -1,0 +1,42 @@
+# Path to the lowest common directory of all the input imaging data
+input dir: str()
+
+# Path to the output FILE, must end with .ome.tif or .ome.tiff
+output full path: include('output format')
+
+# [optional]
+# Number indicating input image pixel size in µm
+pixel size: num(required=False)
+
+# [optional]
+# FOR DEV USE ONLY; Pyramid level to process, 0 is the lowest level pyramid
+pyramid level: num(required=False)
+
+# Image object (see below) - one imaging data file that used as the reference
+# image for other images to be aligned to
+reference image: include('image collection')
+
+# [optional]
+# Image object or list of image objects - imaging data file(s) to be aligned to
+# the reference image
+moving images: list(include('image collection'), required=False)
+
+---
+# Image object schema
+image collection: any(include('fluorescent image'))
+
+_image_base: &_image_base
+    # Filename or the remaining path to the imaging data relative to the input
+    # dir field 
+    filename: str()
+    # [optional but recommended]
+    # Channel name in the output ome-tiff
+    channel name: str(required=False)
+    channel names: list(str(), min=1, required=False)
+  
+fluorescent image:
+    <<: *_image_base
+    output mode: str(equals='multichannel')
+    output channels: list(int(min=1), required=False)
+
+output format: any(str(ends_with='.ome.tif'), str(ends_with='.ome.tiff'))
