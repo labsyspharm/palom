@@ -5,6 +5,7 @@ import yamale
 from loguru import logger
 import datetime
 import shutil
+import palom
 
 from . import schema
 from .. import reader, align, pyramid, color
@@ -245,7 +246,7 @@ def validate_output_path(out_path, overwrite=True):
 
 def validate_config(config_data):
     try:
-        yamale.validate(schema.svs_config_schema, config_data)
+        yamale.validate(schema.cycif_config_schema, config_data)
         logger.info('Config YAML validation success')
         return 0
     except yamale.YamaleError as e:
