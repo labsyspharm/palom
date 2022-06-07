@@ -177,6 +177,67 @@ Y:\DATA\SARDANA\MIHC\768473\RAW
             06-CBB_SARDANA_768473_C04R1_CD8.svs.png
             768473.ome.tif.log
 ```
+### CLI for TIFF and OME-TIFF files
+
+Palom can also merge multiple TIFF or OME-TIFF files into a pyramidal OME-TIFF 
+file with the requirement of a user-defined configuration YAML file.
+
+A configuration example can be printed to the console by running
+
+```bash
+palom-cycif show example
+```
+
+```yaml
+input dir: Y:/user/me/projects/data/cycif
+output full path: Y:/user/me/projects/analysis/cycif/2022/example-output.ome.tiff
+
+pixel size: 0.325
+
+reference image:
+    filename: 20220413/example_input_cycle_1.tif
+    channel names: DAPI, FITC, Cy3, Cy5
+    output mode: multichannel
+
+moving images:
+- filename: 20220413/example_input_cycle_2.tif
+  channel names: DAPI, FITC, Cy3, Cy5
+  output mode: multichannel
+- filename: 20220413/example_input_cycle_3.tif
+  channel names: DAPI, FITC, Cy3, Cy5
+  output mode: multichannel
+```
+
+To show the configuration schema, run the following command
+
+```bash
+palom-cycif show schema
+```
+
+As previously described, a helper script is used to generate the configuration file for running Palom on files. 
+
+Multichannel images should be in stacks based on cycles (e.g. as it would be in CycIF) in the data folder with the following layout
+
+```
+"Y:/user/me/projects/data/cycif/raw"
+    211208_IMT_m102119_02_20x_cycle1.tif
+    211208_IMT_m102119_02_20x_cycle2.tif
+    211208_IMT_m102119_02_20x_cycle3.tif
+```
+
+Running the following command would generate the configuration file
+
+```bash
+palom-cycif-helper -i "Y:/user/me/projects/data/cycif/raw" -n "*cycle1*" -o "Y:/user/me/projects/data/cycif/palom/mosaic.ome.tiff" -c "Y:/user/me/projects/data/cycif/palom/config.yaml"
+```
+
+And running the `palom-cycif` command on the resulting configuration file would produce the output mosaic `ome.tiff` file.
+
+```bash
+palom-cycif run -c "Y:/user/me/projects/data/cycif/palom/config.yaml"
+```
+
+
 
 ---
 
