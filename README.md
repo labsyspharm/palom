@@ -29,6 +29,14 @@ conda activate palom
 
 Install openslide in the conda environment.
 
+- For MacOS, use conda-forge channel
+
+```
+conda install openslide -c conda-forge
+```
+
+- For Windows and Linux, use sdvillal channel
+
 ```
 conda install openslide -c sdvillal
 ```
