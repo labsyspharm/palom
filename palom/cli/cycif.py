@@ -5,7 +5,6 @@ import yamale
 from loguru import logger
 import datetime
 import shutil
-import palom
 
 from . import schema
 from .. import reader, align, pyramid, color
@@ -178,7 +177,7 @@ def run_palom_cycif(
     output_path,
     level
 ):
-    ref_reader = palom.reader.OmePyramidReader(img_paths[0])
+    ref_reader = reader.OmePyramidReader(img_paths[0])
     ref_thumbnail_level = ref_reader.get_thumbnail_level_of_size(2500)
 
     block_affines = []
@@ -186,10 +185,10 @@ def run_palom_cycif(
         if p == img_paths[0]:
             block_affines.append(np.eye(3))
             continue
-        moving_reader = palom.reader.OmePyramidReader(p)
+        moving_reader = reader.OmePyramidReader(p)
         moving_thumbnail_level = moving_reader.get_thumbnail_level_of_size(2500)
 
-        aligner = palom.align.Aligner(
+        aligner = align.Aligner(
             ref_reader.read_level_channels(level, 0),
             moving_reader.read_level_channels(level, 0),
             ref_reader.read_level_channels(ref_thumbnail_level, 0).compute(),
@@ -207,8 +206,8 @@ def run_palom_cycif(
     mosaics = []
 
     for p, mx in zip(img_paths[1:], block_affines):
-        moving_reader = palom.reader.OmePyramidReader(p)
-        m_moving = palom.align.block_affine_transformed_moving_img(
+        moving_reader = reader.OmePyramidReader(p)
+        m_moving = align.block_affine_transformed_moving_img(
             ref_reader.read_level_channels(level, 0),
             moving_reader.pyramid[level],
             mx
@@ -218,8 +217,8 @@ def run_palom_cycif(
     if pixel_size is None:
         pixel_size = ref_reader.pixel_size
 
-    palom.pyramid.write_pyramid(
-        palom.pyramid.normalize_mosaics([
+    pyramid.write_pyramid(
+        pyramid.normalize_mosaics([
             ref_reader.read_level_channels(level, [0, 1, 2, 3]),
             mosaics[0],
             mosaics[1]
