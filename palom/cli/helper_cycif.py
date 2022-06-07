@@ -48,7 +48,7 @@ def main(argv=sys.argv):
     output_path = pathlib.Path(args.o)
     yaml_path = pathlib.Path(args.c)
 
-    cycif_paths = sorted(svs_dir.glob('*.tif'))
+    cycif_paths = sorted(cycif_dir.glob('*.tif'))
     cycif_paths.sort(key=lambda x: x.name.split('_')[-2])
 
     assert len(cycif_paths) > 0
@@ -78,13 +78,13 @@ def main(argv=sys.argv):
         'reference image': {
             'filename': str(ref_slide).replace(str(cycif_dir), '.'),
             'output mode': 'multichannel',
-            'channel names': 'DAPI, FITC, Cy3, Cy5'
+            'channel name': channel_names[0]
         },
         'moving images': [
             {
                 'filename': str(s).replace(str(cycif_dir), '.'),
-                'output mode': 'multichannel'
-                'channel names': "DAPI, FITC, Cy3, Cy5"
+                'output mode': 'multichannel',
+                'channel name': n
             }
             for s, n in zip(cycif_paths, channel_names[1:])
         ]
