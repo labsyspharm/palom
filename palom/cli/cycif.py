@@ -157,7 +157,7 @@ def run(args):
         pixel_size=pixel_size,
         channel_names=channel_names,
         output_path=output_path,
-        ## qc_path=qc_path,
+        qc_path=qc_path,
         level=LEVEL
     )
 
@@ -197,7 +197,18 @@ def run_palom_cycif(
             moving_reader.level_downsamples[moving_thumbnail_level] / moving_reader.level_downsamples[level]
         )
 
-        aligner.coarse_register_affine()        
+        aligner.coarse_register_affine() 
+        
+        # FIXME move the saving figure logic 
+        plt.suptitle(f"L: {ref_reader.path.name}\nR: {p.name}")
+        fig_w = max(plt.gca().get_xlim())
+        fig_h = max(plt.gca().get_ylim()) + 100
+        factor = 1600 / max(fig_w, fig_h)
+        plt.gcf().set_size_inches(fig_w*factor/72, fig_h*factor/72)
+        plt.tight_layout()
+        plt.savefig(qc_path / f"{idx+1:02d}-{p.name}.png", dpi=72)
+        plt.close()
+        
         aligner.compute_shifts()
         aligner.constrain_shifts()
 
