@@ -231,7 +231,7 @@ Running the following command would generate the configuration file
 palom-cycif-helper -i "Y:/user/me/projects/data/cycif/raw" -n "*cycle1*" -o "Y:/user/me/projects/data/cycif/palom/mosaic.ome.tiff" -c "Y:/user/me/projects/data/cycif/palom/config.yaml"
 ```
 
-And running the `palom-cycif` command on the resulting configuration file would produce the output mosaic `ome.tiff` file.
+And running the `palom-cycif` command on the resulting configuration file would produce the output pyramidal `ome.tiff` file and PNG files showing feature-based registration results and a log file.
 
 ```bash
 palom-cycif run -c "Y:/user/me/projects/data/cycif/palom/config.yaml"
