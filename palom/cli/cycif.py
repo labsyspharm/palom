@@ -175,6 +175,7 @@ def run_palom_cycif(
     pixel_size,
     channel_names,
     output_path,
+    qc_path,
     level
 ):
     ref_reader = reader.OmePyramidReader(img_paths[0])
@@ -197,8 +198,8 @@ def run_palom_cycif(
             moving_reader.level_downsamples[moving_thumbnail_level] / moving_reader.level_downsamples[level]
         )
 
-        aligner.coarse_register_affine() 
-        
+        aligner.coarse_register_affine()  
+
         # FIXME move the saving figure logic 
         plt.suptitle(f"L: {ref_reader.path.name}\nR: {p.name}")
         fig_w = max(plt.gca().get_xlim())
@@ -208,14 +209,16 @@ def run_palom_cycif(
         plt.tight_layout()
         plt.savefig(qc_path / f"{idx+1:02d}-{p.name}.png", dpi=72)
         plt.close()
-        
+
+
         aligner.compute_shifts()
         aligner.constrain_shifts()
 
         block_affines.append(aligner.block_affine_matrices_da)
     
     mosaics = []
-
+    mosaics.append(ref_reader.pyramid[level])
+    
     for p, mx in zip(img_paths[1:], block_affines):
         moving_reader = reader.OmePyramidReader(p)
         m_moving = align.block_affine_transformed_moving_img(
@@ -229,11 +232,7 @@ def run_palom_cycif(
         pixel_size = ref_reader.pixel_size
 
     pyramid.write_pyramid(
-        pyramid.normalize_mosaics([
-            ref_reader.read_level_channels(level, [0, 1, 2, 3]),
-            mosaics[0],
-            mosaics[1]
-        ]),
+        pyramid.normalize_mosaics(mosaics),
         output_path,
         pixel_size=pixel_size,
         channel_names=channel_names
