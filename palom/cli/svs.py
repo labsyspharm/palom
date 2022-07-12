@@ -177,7 +177,8 @@ def run_palom(
     channel_names,
     output_path,
     qc_path,
-    level
+    level,
+    downscale_factor = 4
 ):
     ref_reader = reader.SvsReader(img_paths[0])
     ref_color_proc = color.PyramidHaxProcessor(ref_reader.pyramid)
@@ -240,7 +241,8 @@ def run_palom(
         pyramid.normalize_mosaics(mosaics),
         output_path,
         pixel_size=pixel_size,
-        channel_names=channel_names
+        channel_names=channel_names,
+        downscale_factor=downscale_factor
     )
     return 0
 
