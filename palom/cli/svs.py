@@ -291,4 +291,5 @@ def get_image_list(config):
 
 
 if __name__ == '__main__':
+    plt.switch_backend('agg')
     sys.exit(main())
