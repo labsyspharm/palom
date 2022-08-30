@@ -29,7 +29,8 @@ def imagej_rgb2cmyk(rgb_img):
 
 def cmyk2marker_int(cmyk_img, min, max):
     marker_int = cmyk_img[1] + cmyk_img[2]
-    marker_int = skimage.filters.median(marker_int, selem=np.ones((3,3)))
+    # `selem` kwarg renamed to `footprint` in skimage v0.19
+    marker_int = skimage.filters.median(marker_int, np.ones((3,3)))
 
     marker_int = skimage.exposure.rescale_intensity(
         marker_int, in_range=(min, max), out_range=(0, 1)
@@ -40,7 +41,7 @@ def ohsu_cmyk2marker_int(cmyk_img):
     marker_int = cmyk_img[1] + cmyk_img[2]
     # the latest workflow applys median filter here while earlier
     # workflow seems to apply median filter after rescale_intensity
-    marker_int = skimage.filters.median(marker_int, selem=np.ones((3,3)))
+    marker_int = skimage.filters.median(marker_int, np.ones((3,3)))
 
     max_int = marker_int.max()
     marker_int = skimage.exposure.rescale_intensity(
@@ -53,4 +54,4 @@ def ohsu_cmyk2marker_int(cmyk_img):
 def rgb2aec(rgb_img):
     cmyk_img = imagej_rgb2cmyk(rgb_img)
     aec = cmyk_img[1] + cmyk_img[2]
-    return skimage.filters.median(aec, selem=np.ones((3,3)))
+    return skimage.filters.median(aec, np.ones((3,3)))
