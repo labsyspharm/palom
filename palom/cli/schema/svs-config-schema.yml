@@ -9,6 +9,10 @@ output full path: include('output format')
 pixel size: num(required=False)
 
 # [optional]
+# Number indicating downscale factor between levels in the output pyramid
+pyramid downscale factor: int(required=False, min=2, max=32)
+
+# [optional]
 # FOR DEV USE ONLY; Pyramid level to process, 0 is the lowest level pyramid
 pyramid level: num(required=False)
 
