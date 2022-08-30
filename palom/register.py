@@ -7,6 +7,7 @@ import skimage.feature
 import skimage.registration
 import itertools
 import warnings
+import inspect
 import logging
 
 if hasattr(skimage.registration, 'phase_cross_correlation'):
@@ -25,15 +26,20 @@ def phase_cross_correlation(img1, img2, sigma, upsample=10, module='skimage'):
     img2w = img_util.whiten(img2, sigma)
     
     if module == 'skimage':
-        img1_f = scipy.fft.fft2(img1w)
-        img2_f = scipy.fft.fft2(img2w)
         with warnings.catch_warnings():
             warnings.filterwarnings(
-                'ignore', 'invalid value encountered in true_divide',
+                # two patterns observed
+                # 1. invalid value encountered in true_divide
+                # 2. invalid value encountered in divide
+                'ignore', 'invalid value encountered in',
                 RuntimeWarning,
             )
+            kwargs = dict(upsample_factor=upsample)
+            # `normalization` kwarg was introduced in skimage v0.19
+            if 'normalization' in inspect.signature(register_translation).parameters:
+                kwargs.update(normalization=None)
             shift, _error, _phasediff = register_translation(
-                img1_f, img2_f, upsample_factor=upsample, space='fourier'
+                img1w, img2w, **kwargs
             )
     
     elif module == 'cv2':
