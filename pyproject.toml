@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "palom"
-version = "2022.8.1"
+version = "2022.8.2"
 description = "Piecewise alignment for layers of mosaics"
 authors = ["Yu-An Chen <atwood12@gmail.com>"]
 readme = "README.md"
@@ -21,6 +21,7 @@ scikit-learn = ">=0.24"
 opencv-python = "^4.5.3.56"
 zarr = "^2.10.0"
 tifffile = ">=2021.10.12"
+imagecodecs = ">=2021.11.11"
 matplotlib = "^3.4.3"
 tqdm = "^4.62.3"
 napari-lazy-openslide = ">=0.2.0"
