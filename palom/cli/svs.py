@@ -122,6 +122,10 @@ def run(args):
         logger.info(f"Using pixel size defined in configuration YAML file: {pixel_size} µm/pixel")
     else: pixel_size = None
 
+    DOWNSCALE_FACTOR = 4
+    if 'pyramid downscale factor' in config:
+        DOWNSCALE_FACTOR = config['pyramid downscale factor']
+
     images = get_image_list(config)
     
     image_paths = [
@@ -158,7 +162,8 @@ def run(args):
         channel_names=channel_names,
         output_path=output_path,
         qc_path=qc_path,
-        level=LEVEL
+        level=LEVEL,
+        downscale_factor=DOWNSCALE_FACTOR
     )
 
     logger.info(f"Finishing {config_file.name}")    
@@ -177,7 +182,8 @@ def run_palom(
     channel_names,
     output_path,
     qc_path,
-    level
+    level,
+    downscale_factor
 ):
     ref_reader = reader.SvsReader(img_paths[0])
     ref_color_proc = color.PyramidHaxProcessor(ref_reader.pyramid)
@@ -240,7 +246,8 @@ def run_palom(
         pyramid.normalize_mosaics(mosaics),
         output_path,
         pixel_size=pixel_size,
-        channel_names=channel_names
+        channel_names=channel_names,
+        downscale_factor=downscale_factor
     )
     return 0
 
