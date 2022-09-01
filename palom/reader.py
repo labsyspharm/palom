@@ -1,6 +1,5 @@
 from __future__ import annotations
 import pathlib
-from napari_lazy_openslide import OpenSlideStore
 import zarr
 import dask.array as da
 import numpy as np
@@ -139,6 +138,11 @@ class OmePyramidReader(DaPyramidChannelReader):
 class SvsReader(DaPyramidChannelReader):
 
     def __init__(self, path: str | pathlib.Path) -> None:
+        # FIXME maybe move napari_lazy_openslide to optional dependency?
+        # https://python-poetry.org/docs/pyproject/#extras
+        # https://github.com/AllenCellModeling/aicsimageio/blob/main/aicsimageio/readers/bioformats_reader.py#L33-L40
+        from napari_lazy_openslide import OpenSlideStore
+        
         self.path = pathlib.Path(path)
         self.store = OpenSlideStore(str(self.path))
         self.zarr = zarr.open(self.store, mode='r')
