@@ -82,6 +82,51 @@ def normalized_phase_correlation(img1, img2, sigma):
     return corr
 
 
+import skimage.transform
+def rotation_scale_from_pcc(img1, img2, sigma=0, upsample=10):
+    img1w = img_util.whiten(img1, sigma)
+    img2w = img_util.whiten(img2, sigma)
+
+    # # window images
+    img1w *= skimage.filters.window('hann', img1w.shape)
+    img2w *= skimage.filters.window('hann', img2w.shape)
+
+    # work with shifted FFT magnitudes
+    img1_fs = np.abs(scipy.fft.fftshift(scipy.fft.fft2(img1w)))
+    img2_fs = np.abs(scipy.fft.fftshift(scipy.fft.fft2(img2w)))
+
+    # Create log-polar transformed FFT mag images and register
+    shape = img1_fs.shape
+    radius = shape[0] // 8  # only take lower frequencies
+    warped_img1_fs = skimage.transform.warp_polar(
+        img1_fs, radius=radius, output_shape=shape,
+        scaling='log', order=0
+    )
+    warped_img2_fs = skimage.transform.warp_polar(
+        img2_fs, radius=radius, output_shape=shape,
+        scaling='log', order=0
+    )
+
+    warped_img1_fs = warped_img1_fs[:shape[0] // 2, :]  # only use half of FFT
+    warped_img2_fs = warped_img2_fs[:shape[0] // 2, :]
+    shifts, error, phasediff = register_translation(
+        warped_img1_fs,
+        warped_img2_fs,
+        upsample_factor=upsample
+    )
+
+    # Use translation parameters to calculate rotation and scaling parameters
+    shiftr, shiftc = shifts[:2]
+    recovered_angle = (360 / shape[0]) * shiftr
+    klog = shape[1] / np.log(radius)
+    shift_scale = np.exp(shiftc / klog)
+
+    print(f'Recovered value for cc rotation: {recovered_angle}')
+    print(f'Recovered value for scaling difference: {shift_scale}')
+    print()
+    return recovered_angle, shift_scale
+
+
 # 
 # Feature-based registration
 # 

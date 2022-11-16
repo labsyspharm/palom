@@ -249,17 +249,20 @@ class Aligner:
 
     def overlay_grid(self):
         import matplotlib.pyplot as plt
+        img = self.ref_thumbnail
         shape = self.grid_shape
         grid = np.arange(np.multiply(*shape)).reshape(shape)
         h, w = np.divide(
-            self.ref_thumbnail.shape,
+            img.shape,
             np.divide(self.ref_img.chunksize, self.ref_thumbnail_down_factor)
         )
+        cmap = 'Greys' if img_util.is_brightfield_img(img) else 'Greys_r'
         plt.figure()
         plt.imshow(
-            np.sqrt(np.abs(self.ref_thumbnail)),
-            cmap='Greys_r',
+            np.sqrt(np.abs(img)),
+            cmap=cmap,
             extent=(-0.5, w-0.5, h-0.5, -0.5)
         )
-        plt.imshow((grid % 2) == 0, cmap='cool', alpha=0.2)
+        # checkerboard pattern
+        plt.imshow(np.indices(shape).sum(axis=0) % 2, cmap='cool', alpha=0.2)
         return grid

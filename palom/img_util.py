@@ -56,3 +56,9 @@ def is_brightfield_img(img, max_size=100):
     mask = entropy_mask(thumbnail)
     # is using mean better?
     return np.median(thumbnail[mask]) < np.median(thumbnail[~mask])
+
+
+def to_napari_affine(mx):
+    ul = np.flipud(np.fliplr(mx[:2, :2]))
+    rows = np.hstack((ul, mx[:2, 2][::-1].reshape(-1, 1)))
+    return np.vstack((rows, [0, 0, 1]))
