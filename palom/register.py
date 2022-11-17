@@ -101,6 +101,8 @@ def feature_based_registration(
     n_keypoints=1000, plot_match_result=False,
     plot_individual_result=False, ransacReprojThreshold=5
 ):
+    img_left = np.asarray(img_left)
+    img_right = np.asarray(img_right)
     compare_funcs = [
         np.less if img_util.is_brightfield_img(i) else np.greater
         for i in (img_left, img_right)
