@@ -1,7 +1,9 @@
 import numpy as np
+import dask.array as da
 import cv2
 import skimage.transform
 import skimage.filters
+import skimage.morphology
 
 def cv2_pyramid(img, max_size=1024):
     size_max = np.array(img.shape).max()
@@ -56,3 +58,22 @@ def is_brightfield_img(img, max_size=100):
     mask = entropy_mask(thumbnail)
     # is using mean better?
     return np.median(thumbnail[mask]) < np.median(thumbnail[~mask])
+
+
+def block_labeled_mask(img_shape, block_shape, out_chunks=None):
+    assert len(img_shape) == 2
+    if len(block_shape) == 1:
+        block_shape = (block_shape[0], block_shape[0])
+    da_template = da.zeros(img_shape, chunks=block_shape)
+    unit_mask = np.indices(da_template.numblocks).sum(axis=0) % 2
+    unit_mask = skimage.morphology.label(
+        unit_mask, connectivity=1, background=-1
+    ).astype(np.int32)
+    full_mask = np.repeat(
+        np.repeat(unit_mask, block_shape[0], axis=0),
+        block_shape[1],
+        axis=1
+    )[:img_shape[0], :img_shape[1]]
+    if out_chunks is None:
+        out_chunks = block_shape
+    return da.from_array(full_mask, chunks=out_chunks)
