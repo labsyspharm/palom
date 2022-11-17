@@ -11,6 +11,7 @@ def block_affine_dask(
     fill_empty=0,
     multichannel=False,
     block_info=None,
+    is_mask=False
 ):
     if not multichannel:
         mx = affine_matrix
@@ -23,14 +24,16 @@ def block_affine_dask(
     return block_affine(
         (Y[0], X[0]), shape,
         transformation, src_array,
-        fill_empty=fill_empty, multichannel=multichannel
+        fill_empty=fill_empty, multichannel=multichannel,
+        is_mask=is_mask
     )
 
 
 def block_affine(
     position, block_shape, 
     transformation, src_img,
-    fill_empty=0, multichannel=False
+    fill_empty=0, multichannel=False,
+    is_mask=False
 ):
     assert np.min(block_shape) >= 0, (
         f'block_shape {block_shape} is invalid' 
@@ -82,10 +85,21 @@ def block_affine(
         rotation=transformation.rotation,
         shear=transformation.shear
     )
-    warped_src_img_block = cv2.warpAffine(
-        src_img_block, block_tform.params[:2, :],
-        (width, height), flags=cv2.INTER_AREA
-    )
+    order = cv2.INTER_NEAREST if is_mask else cv2.INTER_AREA
+    try:
+        warped_src_img_block = cv2.warpAffine(
+            src_img_block, block_tform.params[:2, :],
+            (width, height), flags=order
+        )
+    except cv2.error as err:
+        if err.err == 'ifunc != 0':
+            print('switching to nn interpolation')
+            order = cv2.INTER_NEAREST
+            warped_src_img_block = cv2.warpAffine(
+                src_img_block, block_tform.params[:2, :],
+                (width, height), flags=order
+            )
+        else: raise(err)
     if multichannel:
         # shape multichannel image as (C, Y, X)
         warped_src_img_block = np.moveaxis(warped_src_img_block, 2, 0)

@@ -110,7 +110,8 @@ def write_pyramid(
     pixel_size=1,
     channel_names=None,
     verbose=True,
-    downscale_factor=4
+    downscale_factor=4,
+    is_mask=False
 ):
     ref_m = mosaics[0]
     path = output_path
@@ -175,6 +176,7 @@ def write_pyramid(
                     tile_shape=tile_shape,
                     downscale_factor=downscale_factor,
                     level=level,
+                    is_mask=is_mask
                 ),
                 shape=(num_channels, *shape),
                 subfiletype=1,
@@ -219,7 +221,8 @@ def tile_from_pyramid(
     num_channels,
     tile_shape,
     downscale_factor=2,
-    level=0
+    level=0,
+    is_mask=False
 ):
     h, w = tile_shape
     for c in tqdm.trange(
@@ -229,9 +232,12 @@ def tile_from_pyramid(
         img = tifffile.imread(
             path, is_ome=False, series=0, key=c, level=level
         )
-        img = skimage.transform.downscale_local_mean(
-            img, (downscale_factor, downscale_factor)
-        ).astype(img.dtype)
+        if is_mask:
+            img = img[::downscale_factor, ::downscale_factor]
+        else:
+            img = skimage.transform.downscale_local_mean(
+                img, (downscale_factor, downscale_factor)
+            ).astype(img.dtype)
         num_rows, num_columns = img.shape
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):

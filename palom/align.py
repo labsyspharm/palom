@@ -10,27 +10,24 @@ from . import block_affine
 from . import img_util
 
 
-def block_affine_transformed_moving_img(ref_img, moving_img, mxs):
+def block_affine_transformed_moving_img(ref_img, moving_img, mxs, is_mask=False):
     assert img_util.is_single_channel(ref_img)
+    return_slice = slice(None)
     if img_util.is_single_channel(moving_img) and moving_img.ndim == 2:
-        return da.map_blocks(
+        # return 2d image if ndim of moving_img is 2
+        moving_img = moving_img[np.newaxis]
+        return_slice = 0
+    return da.array([
+        da.map_blocks(
             block_affine.block_affine_dask,
             mxs,
+            src_array=c,
             chunks=ref_img.chunks,
             dtype=moving_img.dtype,
-            src_array=moving_img
+            is_mask=is_mask
         )
-    else:
-        return da.array([
-            da.map_blocks(
-                block_affine.block_affine_dask,
-                mxs,
-                chunks=ref_img.chunks,
-                dtype=moving_img.dtype,
-                src_array=c
-            )
-            for c in moving_img
-        ])
+        for c in moving_img
+    ])[return_slice]
 
 
 def block_shifts(ref_img, moving_img, pcc_kwargs=None):
