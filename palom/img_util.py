@@ -77,3 +77,9 @@ def block_labeled_mask(img_shape, block_shape, out_chunks=None):
     if out_chunks is None:
         out_chunks = block_shape
     return da.from_array(full_mask, chunks=out_chunks)
+
+
+def to_napari_affine(mx): 
+    ul = np.flip(mx[:2, :2], (0, 1))
+    rows = np.hstack([ul, np.flipud(mx[:2, 2:3])])
+    return np.vstack((rows, [0, 0, 1]))
