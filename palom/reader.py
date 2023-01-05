@@ -98,10 +98,15 @@ class DaPyramidChannelReader:
 
 class OmePyramidReader(DaPyramidChannelReader):
 
-    def __init__(self, path: str | pathlib.Path) -> None:
+    def __init__(
+        self,
+        path: str | pathlib.Path,
+        pixel_size: float | None = None
+    ) -> None:
         self.path = pathlib.Path(path)
         pyramid = self.pyramid_from_ometiff(self.path)
         channel_axis = 0
+        self._pixel_size = 1 if pixel_size is None else pixel_size
         super().__init__(pyramid, channel_axis)
 
     @staticmethod
@@ -132,12 +137,16 @@ class OmePyramidReader(DaPyramidChannelReader):
 
     @property
     def pixel_size(self) -> float:
-        return 1
+        return self._pixel_size
 
 
 class SvsReader(DaPyramidChannelReader):
 
-    def __init__(self, path: str | pathlib.Path) -> None:
+    def __init__(
+        self,
+        path: str | pathlib.Path,
+        pixel_size: float | None = None
+    ) -> None:
         # FIXME maybe move napari_lazy_openslide to optional dependency?
         # https://python-poetry.org/docs/pyproject/#extras
         # https://github.com/AllenCellModeling/aicsimageio/blob/main/aicsimageio/readers/bioformats_reader.py#L33-L40
@@ -146,6 +155,7 @@ class SvsReader(DaPyramidChannelReader):
         self.path = pathlib.Path(path)
         self.store = OpenSlideStore(str(self.path))
         self.zarr = zarr.open(self.store, mode='r')
+        self._pixel_size = pixel_size
         pyramid = self.pyramid_from_svs()
         channel_axis = 2
         super().__init__(pyramid, channel_axis)
@@ -158,11 +168,14 @@ class SvsReader(DaPyramidChannelReader):
     
     @property
     def pixel_size(self):
+        if self._pixel_size is not None:
+            return self._pixel_size
         try:
             return float(self.store._slide.properties['openslide.mpp-x'])
         except Exception:
             logger.warning(
                 f'Unable to parse pixel size from {self.path.name};'
-                f' assuming 1 µm'
+                f' assuming 1 µm. Use `_pixel_size` to set it manually'
             )
-            return 1
+            self._pixel_size = 1
+            return self._pixel_size
