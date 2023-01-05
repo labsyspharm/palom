@@ -203,3 +203,43 @@ class Aligner:
             self.block_affine_matrices,
             self.grid_shape
         )
+
+
+def get_aligner(
+    reader1, reader2,
+    level1=0, level2=0,
+    channel1=0, channel2=0,
+    thumbnail_level1=-1, thumbnail_level2=-1
+):
+    if None in [thumbnail_level1, thumbnail_level2]:
+        thumbnail_level1, thumbnail_level2 = match_thumbnail_level(
+            [reader1, reader2]
+        )
+    if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
+    if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
+    return Aligner( 
+        reader1.read_level_channels(level1, channel1),  
+        reader2.read_level_channels(level2, channel2), 
+        reader1.read_level_channels(thumbnail_level1, channel1), 
+        reader2.read_level_channels(thumbnail_level2, channel2), 
+        reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1], 
+        reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2] 
+    ) 
+
+
+def match_thumbnail_level(readers):
+    assert len(readers) > 1
+    level_px_sizes = [
+        {
+            rr.pixel_size*vv: kk
+            for kk, vv in rr.level_downsamples.items()
+        }
+        for rr in readers
+    ]
+    px_sizes = [sorted(ss.keys()) for ss in level_px_sizes]
+    target_px_size = min([max(ss) for ss in px_sizes])
+    target_levels = [
+        lps[ps[np.argmin(np.square(np.array(ps) - target_px_size))]]
+        for ps, lps in zip(px_sizes, level_px_sizes)
+    ]
+    return target_levels
