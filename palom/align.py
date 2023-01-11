@@ -122,13 +122,17 @@ class Aligner:
         self.ref_thumbnail_down_factor=ref_thumbnail_down_factor
         self.moving_thumbnail_down_factor=moving_thumbnail_down_factor
 
-    def coarse_register_affine(self, n_keypoints=2000):
+    def coarse_register_affine(self, **kwargs):
+        default_kwargs = {
+            'n_keypoints': 2000,
+            'plot_match_result': True
+        }
+        default_kwargs.update(kwargs)
         ref_img = self.ref_thumbnail
         moving_img = self.moving_thumbnail
         affine_matrix = register.feature_based_registration(
             ref_img, moving_img,
-            n_keypoints=n_keypoints,
-            plot_match_result=True
+            **default_kwargs
         )
         self.coarse_affine_matrix = np.vstack(
             [affine_matrix, [0, 0, 1]]
