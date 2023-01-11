@@ -111,6 +111,7 @@ def write_pyramid(
     channel_names=None,
     verbose=True,
     downscale_factor=4,
+    compression=None,
     is_mask=False
 ):
     ref_m = mosaics[0]
@@ -161,6 +162,7 @@ def write_pyramid(
             shape=(num_channels, *shapes[0]),
             subifds=int(num_levels - 1),
             dtype=dtype,
+            compression=compression,
             tile=tile_shapes[0]
         )
         logger.info('Generating pyramid')
@@ -181,6 +183,7 @@ def write_pyramid(
                 shape=(num_channels, *shape),
                 subfiletype=1,
                 dtype=dtype,
+                compression=compression,
                 tile=tile_shape
             )
 
