@@ -1,14 +1,17 @@
+import functools
+import inspect
+import itertools
+import logging
+import warnings
+
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.fft
-from . import img_util
-
 import skimage.feature
 import skimage.registration
-import itertools
-import warnings
-import inspect
-import logging
+
+from . import img_util, register_util
 
 if hasattr(skimage.registration, 'phase_cross_correlation'):
     register_translation = skimage.registration.phase_cross_correlation
@@ -91,47 +94,87 @@ def normalized_phase_correlation(img1, img2, sigma):
 # 
 # Feature-based registration
 # 
-import skimage.filters
-import matplotlib.pyplot as plt
-import skimage.exposure
-
-
 def feature_based_registration(
     img_left, img_right,
+    detect_flip_rotate=False,
     n_keypoints=1000, plot_match_result=False,
     plot_individual_result=False, ransacReprojThreshold=5
 ):
-    img_left = np.asarray(img_left)
-    img_right = np.asarray(img_right)
-    compare_funcs = [
-        np.less if img_util.is_brightfield_img(i) else np.greater
-        for i in (img_left, img_right)
+    flip_rotate_func, mx_fr = np.array, np.eye(3)
+    if detect_flip_rotate:
+        flip_rotate_func, mx_fr = match_test_flip_rotate(img_left, img_right)
+    
+    img_right = flip_rotate_func(img_right)
+    mx_affine = ensambled_match(
+        img_left, img_right,
+        n_keypoints, plot_match_result,
+        plot_individual_result, ransacReprojThreshold,
+    )
+    mx_affine = (np.vstack([mx_affine, [0, 0, 1]]) @ mx_fr)[:2, :]
+    return mx_affine
+
+
+def match_test_flip_rotate(img_left, img_right):
+
+    flip_funcs = [np.array] + [
+        functools.partial(np.flip, axis=aa)
+        for aa in (0, 1, (0, 1))
     ]
-    imgs_otsu = [
-        f(i, skimage.filters.threshold_otsu(i)).astype(np.uint8)
-        for (i, f) in zip((img_left, img_right), compare_funcs)
+    rotate_funcs = [
+        functools.partial(np.rot90, k=i)
+        for i in range(4)
     ]
-    imgs_tri = [
-        f(i, skimage.filters.threshold_triangle(i)).astype(np.uint8)
-        for (i, f) in zip((img_left, img_right), compare_funcs)
+    flip_mxs = [np.eye(3)] + [
+        register_util.get_flip_mx(img_right.shape, aa)
+        for aa in (0, 1, (0, 1))
     ]
-    img_left, img_right = match_bf_fl_histogram(img_left, img_right)
-    imgs_whiten = [
-        img_util.whiten(i, 1)
-        for i in (img_left, img_right)
+    rotate_mxs = [
+        register_util.get_rot90_mx(img_right.shape, i)
+        for i in range(4)
     ]
+
+    # downsize images to < 500 px for speed
+    shape_max = max(*img_left.shape, *img_right.shape)
+    downsize_factor = int(np.ceil(shape_max / 500))
+    simg_left = img_left[::downsize_factor, ::downsize_factor]
+    simg_right = img_right[::downsize_factor, ::downsize_factor]
+
+    n_matches = [
+        ensambled_match(
+            simg_left, rr(ff(simg_right)), return_match_mask=True
+        )[1].sum()
+        # only need half of the 4x4 combinations
+        for ff, rr in itertools.product(flip_funcs[:2], rotate_funcs)
+    ]
+    best_flip, best_rotate = np.unravel_index(
+        np.argmax(n_matches), (2, 4)
+    )
+    print(np.array(n_matches, int).reshape(2, 4))
+    print(best_flip, best_rotate)
+
+    # construct best flip and rotate func
+    ff, rr = flip_funcs[best_flip], rotate_funcs[best_rotate]
+    def flip_rotate_func(target_img):
+        return rr(ff(target_img))
+
+    return flip_rotate_func, rotate_mxs[best_rotate] @ flip_mxs[best_flip]
+
+
+def ensambled_match(
+    img_left, img_right,
+    n_keypoints=1000, plot_match_result=False,
+    plot_individual_result=False, ransacReprojThreshold=5,
+    return_match_mask=False
+):
+    img_pairs = register_util.make_img_pairs(img_left, img_right)
+    img_left, img_right = img_pairs[2]
 
     all_found = [
         cv2_feature_detect_and_match(
             *img_pair, n_keypoints=n_keypoints,
             plot_match_result=plot_individual_result
         )
-        for img_pair in [
-            imgs_otsu,
-            imgs_tri,
-            (img_left, img_right),
-            imgs_whiten
-        ]
+        for img_pair in img_pairs
     ]
     all_src = np.vstack([i[0] for i in all_found])
     all_dst = np.vstack([i[1] for i in all_found])
@@ -151,33 +194,7 @@ def feature_based_registration(
             np.arange(len(all_src)).repeat(2).reshape(-1, 2)[mask.flatten()>0],
             only_matches=False
         )
-    return t_matrix
-
-
-def match_bf_fl_histogram(img1, img2):
-    img1 = img1.astype(np.float32)
-    img2 = img2.astype(np.float32)
-    is_bf_img1, is_bf_img2 = [
-        img_util.is_brightfield_img(i) 
-        for i in (img1, img2)
-    ]
-    if is_bf_img1 == is_bf_img2:
-        return img1, skimage.exposure.match_histograms(img2, img1)
-    elif is_bf_img1:
-        return img1, skimage.exposure.match_histograms(-img2, img1)
-    elif is_bf_img2:
-        return skimage.exposure.match_histograms(-img1, img2), img2
-
-
-def plot_img_keypoints(imgs, keypoints):
-    fig, axs = plt.subplots(1, len(imgs))
-    for i, k, a in zip(imgs, keypoints, axs):
-        a.imshow(cv2.drawKeypoints(
-            i, k, None,
-            flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT
-        ))
-        a.set_title(len(k))
-    return 
+    return (t_matrix, mask) if return_match_mask else t_matrix
 
 
 def cv2_feature_detect_and_match(
@@ -197,7 +214,7 @@ def cv2_feature_detect_and_match(
         np.dstack(3*(img_right,)), None
     )
     if plot_keypoint_result == True:
-        plot_img_keypoints(
+        register_util.plot_img_keypoints(
             [img_left, img_right], [keypoints_left, keypoints_right]
         )
     logging.info(f"keypts L:{len(keypoints_left)}, keypts R:{len(keypoints_right)}")
@@ -215,7 +232,7 @@ def cv2_feature_detect_and_match(
     )
     t_matrix, mask = cv2.estimateAffine2D(
         dst_pts, src_pts, 
-        method=cv2.RANSAC, ransacReprojThreshold=3, maxIters=5000
+        method=cv2.RANSAC, ransacReprojThreshold=30, maxIters=5000
     )
     if plot_match_result == True:
         plt.figure()
