@@ -70,13 +70,31 @@ def constrain_block_shifts(shifts, grid_shape):
     return fitted_shifts
 
 
-def viz_shifts(shifts, grid_shape, vmax=None):
+def viz_shifts(shifts, grid_shape, dcenter=None, ax=None):
     import matplotlib.pyplot as plt
+    import matplotlib.colors
     distances = np.linalg.norm(shifts, axis=1)
-    if vmax is None:
-        vmax = skimage.filters.threshold_triangle(distances)
-    plt.figure()
-    plt.imshow(distances.reshape(grid_shape), vmax=vmax)
+    if dcenter is None:
+        dcenter = skimage.filters.threshold_triangle(distances)
+    dmin, dmax = np.percentile(distances, (0, 100))
+    divnorm = matplotlib.colors.TwoSlopeNorm(dcenter, dmin, dmax)
+    colorbar_ticks = np.concatenate(
+        [np.linspace(dmin, dcenter, 5), np.linspace(dcenter, dmax, 5)[1:]]
+    )
+    if ax is None:
+        _, ax = plt.subplots()
+    custom_cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
+        'cm_shift', np.vstack([
+            plt.cm.plasma(np.linspace(0, 1, 256)),
+            plt.cm.gray(np.linspace(0.5, 1, 256))
+        ])
+    )
+    im = ax.imshow(distances.reshape(grid_shape), norm=divnorm, cmap=custom_cmap)
+    cax = ax.inset_axes([1.04, 0.0, 0.02, 1])
+    colorbar = plt.colorbar(im, cax=cax)
+    colorbar.set_ticks(colorbar_ticks)
+    
+    return ax
 
 
 def block_affine_matrices(mx, shifts):
@@ -207,6 +225,36 @@ class Aligner:
             self.block_affine_matrices,
             self.grid_shape
         )
+
+    def overlay_grid(self, ax=None): 
+        import matplotlib.pyplot as plt
+        img = self.ref_thumbnail
+        img = skimage.exposure.rescale_intensity(img, out_range=np.uint16)
+        shape = self.grid_shape
+        grid = np.arange(np.multiply(*shape)).reshape(shape)
+        h, w = np.divide(
+            img.shape,
+            np.divide(self.ref_img.chunksize, self.ref_thumbnail_down_factor)
+        )
+        cmap = 'grays_r' if img_util.is_brightfield_img(img) else 'gray'
+        if ax is None:
+            _, ax = plt.subplots()
+        ax.imshow(
+            np.log1p(img),
+            cmap=cmap,
+            extent=(-0.5, w-0.5, h-0.5, -0.5)
+        )
+        # checkerboard pattern
+        ax.imshow(np.indices(shape).sum(axis=0) % 2, cmap='cool', alpha=0.2)
+        return grid
+    
+    def plot_shifts(self):
+        import matplotlib.pyplot as plt
+        fig, axs = plt.subplots(1, 2, sharex=True, sharey=True)
+        self.overlay_grid(axs[0])
+        shifts = getattr(self, 'original_shifts', self.shifts)
+        viz_shifts(shifts, self.grid_shape, ax=axs[1])
+        return fig
 
 
 def get_aligner(
