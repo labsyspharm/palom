@@ -53,6 +53,7 @@ def entropy_mask(img, kernel_size=9):
 
 
 def is_brightfield_img(img, max_size=100):
+    img = np.array(img)
     downscale_factor = int(max(img.shape) / max_size)
     thumbnail = skimage.transform.downscale_local_mean(img, (downscale_factor, downscale_factor))
     mask = entropy_mask(thumbnail)
