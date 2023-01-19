@@ -310,8 +310,10 @@ def process_img_channel_pair(
             ax.set_anchor('N')
         
         plt.tight_layout()
+        out_dir = img_path.parent / 'qc'
+        out_dir.mkdir(exist_ok=True)
         fig.savefig(
-            img_path.parent / f"flow-field-{img_path.stem}-channel-{ref_channel}-{channel}.png",
+            out_dir / f"flow-field-{img_path.stem}-channel-{ref_channel}-{channel}.png",
             bbox_inches='tight', dpi=144
         )
         figures.append(fig)
