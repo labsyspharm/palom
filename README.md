@@ -21,7 +21,7 @@ installing miniconda](https://docs.conda.io/en/latest/miniconda.html)
 Create a named conda environment - _palom_, in the following example, and activate the environment.
 
 ```
-conda create -n palom python=3.7 pip -c conda-forge
+conda create -n palom python=3.10 pip -c conda-forge
 conda activate palom
 ```
 
