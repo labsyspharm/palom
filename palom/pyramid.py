@@ -228,19 +228,29 @@ def tile_from_pyramid(
     is_mask=False
 ):
     h, w = tile_shape
+    import zarr, dask.array as da
+    store = tifffile.imread(
+        path, level=level,
+        series=0, aszarr=True, squeeze=True
+    )
     for c in tqdm.trange(
             num_channels,
             ascii=True, desc=f'Processing channel'
         ):
-        img = tifffile.imread(
-            path, is_ome=False, series=0, key=c, level=level
-        )
+        img = da.from_zarr(zarr.open(store, mode='r'))[c]
+
         if is_mask:
             img = img[::downscale_factor, ::downscale_factor]
         else:
-            img = skimage.transform.downscale_local_mean(
-                img, (downscale_factor, downscale_factor)
+            # img = skimage.transform.downscale_local_mean(
+            #     img, (downscale_factor, downscale_factor)
+            # ).astype(img.dtype)
+            img = img.map_blocks(
+                skimage.transform.downscale_local_mean,
+                factors=(downscale_factor, downscale_factor),
+                dtype=float
             ).astype(img.dtype)
+        img = img.compute()
         num_rows, num_columns = img.shape
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):
