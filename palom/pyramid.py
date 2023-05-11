@@ -112,8 +112,10 @@ def write_pyramid(
     verbose=True,
     downscale_factor=4,
     compression=None,
-    is_mask=False
+    is_mask=False,
+    tile_size=None
 ):
+    mosaics = normalize_mosaics(mosaics)
     ref_m = mosaics[0]
     path = output_path
     num_channels = count_num_channels(mosaics)
@@ -127,6 +129,12 @@ def write_pyramid(
     num_levels = pyramid_setting.num_levels(base_shape)
     tile_shapes = pyramid_setting.tile_shapes(base_shape)
     shapes = pyramid_setting.pyramid_shapes(base_shape)
+
+    if tile_size is not None: 
+        assert tile_size % 16 == 0, ( 
+            f"tile_size must be None or multiples of 16, not {tile_size}" 
+        ) 
+    tile_shapes = [(tile_size, tile_size)] * num_levels 
 
     dtype = ref_m.dtype
 
