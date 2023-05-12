@@ -134,7 +134,7 @@ def write_pyramid(
         assert tile_size % 16 == 0, ( 
             f"tile_size must be None or multiples of 16, not {tile_size}" 
         ) 
-    tile_shapes = [(tile_size, tile_size)] * num_levels 
+        tile_shapes = [(tile_size, tile_size)] * num_levels 
 
     dtype = ref_m.dtype
 
