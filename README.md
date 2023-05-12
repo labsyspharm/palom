@@ -220,7 +220,7 @@ c2m = palom.align.block_affine_transformed_moving_img(
 )
 
 palom.pyramid.write_pyramid(
-    palom.pyramid.normalize_mosaics([c2m]),
+    [c2m],
     r"Y:\DATA\SARDANA\MIHC\75684\mosaic.ome.tif",
     pixel_size=c1r.pixel_size*c1r.level_downsamples[LEVEL],
 )
@@ -282,13 +282,13 @@ c2m = palom.align.block_affine_transformed_moving_img(
 
 # write the registered images to a pyramidal ome-tiff
 palom.pyramid.write_pyramid(
-    mosaics=palom.pyramid.normalize_mosaics([
+    mosaics=[
         # select only the first three channels in referece image to be written
         # to the output ome-tiff; for writing all channels, use
         # `c1r.pyramid[LEVEL]` instead
         c1r.read_level_channels(LEVEL, [0, 1, 2]),
         c2m
-    ]),
+    ],
     output_path=r"Z:\P37_Pilot2\mosaic.ome.tif",
     pixel_size=c1r.pixel_size*c1r.level_downsamples[LEVEL]
 )

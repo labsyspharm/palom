@@ -243,7 +243,7 @@ def run_palom(
         pixel_size = ref_reader.pixel_size
 
     pyramid.write_pyramid(
-        pyramid.normalize_mosaics(mosaics),
+        mosaics,
         output_path,
         pixel_size=pixel_size,
         channel_names=channel_names,
