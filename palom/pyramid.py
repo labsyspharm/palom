@@ -135,7 +135,7 @@ def write_pyramid(
         assert tile_size % 16 == 0, ( 
             f"tile_size must be None or multiples of 16, not {tile_size}" 
         ) 
-        tile_shapes = [(tile_size, tile_size)] * num_levels 
+        tile_shapes = [(tile_size, tile_size)] * num_levels
 
     dtype = ref_m.dtype
 
@@ -236,31 +236,22 @@ def tile_from_pyramid(
     level=0,
     is_mask=False
 ):
-    h, w = tile_shape
-    import zarr, dask.array as da
-    store = tifffile.imread(
-        path, level=level,
-        series=0, aszarr=True, squeeze=True
-    )
     for c in tqdm.trange(
             num_channels,
             ascii=True, desc=f'Processing channel'
         ):
-        img = da.from_zarr(zarr.open(store, mode='r'))[c]
-
-        if is_mask:
-            img = img[::downscale_factor, ::downscale_factor]
-        else:
-            # img = skimage.transform.downscale_local_mean(
-            #     img, (downscale_factor, downscale_factor)
-            # ).astype(img.dtype)
-            img = img.map_blocks(
-                img_util.cv2_downscale_local_mean,
-                factors=downscale_factor,
-                dtype=img.dtype
+        img = tifffile.imread(
+            path, is_ome=False, series=0, key=c, level=level
+        )
+        if not is_mask:
+            import cv2
+            cv2.blur(
+                img, ksize=(downscale_factor, downscale_factor), anchor=(0, 0), dst=img
             )
-        img = img.compute()
         num_rows, num_columns = img.shape
+        h, w = tile_shape
+        h *= downscale_factor
+        w *= downscale_factor
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):
-                yield np.array(img[y:y+h, x:x+w])
+                yield np.array(img[y:y+h:downscale_factor, x:x+w:downscale_factor])
