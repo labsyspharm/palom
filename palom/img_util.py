@@ -84,3 +84,21 @@ def to_napari_affine(mx):
     ul = np.flip(mx[:2, :2], (0, 1))
     rows = np.hstack([ul, np.flipud(mx[:2, 2:3])])
     return np.vstack((rows, [0, 0, 1]))
+
+
+# orders of magnitute faster than skimage.transform.downscale_local_mean
+# also the gives sensible values of pixels on the edge 
+def downscale_local_mean_cv2(img, factor): 
+    assert img.ndim in [2, 3] 
+    img = np.asarray(img) 
+    axis_moved = False 
+    channel_ax = np.argmin(img.shape) 
+    if (img.ndim == 3) & (channel_ax != 2): 
+        img = np.moveaxis(img, channel_ax, 2) 
+        axis_moved = True
+    simg = cv2.blur(
+        img, ksize=(factor, factor), anchor=(0, 0)
+    )[::factor, ::factor]
+    if axis_moved: 
+        simg = np.moveaxis(simg, 2, channel_ax) 
+    return simg
