@@ -5,6 +5,7 @@ import numpy as np
 import skimage.transform
 from loguru import logger
 
+from . import img_util
 from . import __version__ as _version
 
 
@@ -254,10 +255,10 @@ def tile_from_pyramid(
             #     img, (downscale_factor, downscale_factor)
             # ).astype(img.dtype)
             img = img.map_blocks(
-                skimage.transform.downscale_local_mean,
-                factors=(downscale_factor, downscale_factor),
-                dtype=float
-            ).astype(img.dtype)
+                img_util.cv2_downscale_local_mean,
+                factors=downscale_factor,
+                dtype=img.dtype
+            )
         img = img.compute()
         num_rows, num_columns = img.shape
         for y in range(0, num_rows, h):

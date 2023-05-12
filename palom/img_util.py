@@ -55,7 +55,7 @@ def entropy_mask(img, kernel_size=9):
 def is_brightfield_img(img, max_size=100):
     img = np.array(img)
     downscale_factor = int(max(img.shape) / max_size)
-    thumbnail = skimage.transform.downscale_local_mean(img, (downscale_factor, downscale_factor))
+    thumbnail = cv2_downscale_local_mean(img, (downscale_factor, downscale_factor))
     mask = entropy_mask(thumbnail)
     # is using mean better?
     return np.median(thumbnail[mask]) < np.median(thumbnail[~mask])
@@ -88,7 +88,7 @@ def to_napari_affine(mx):
 
 # orders of magnitute faster than skimage.transform.downscale_local_mean
 # also the gives sensible values of pixels on the edge 
-def downscale_local_mean_cv2(img, factor): 
+def cv2_downscale_local_mean(img, factor): 
     assert img.ndim in [2, 3] 
     img = np.asarray(img) 
     axis_moved = False 
