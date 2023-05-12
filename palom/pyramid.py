@@ -1,11 +1,12 @@
 import math
+
+import cv2
+import numpy as np
 import tifffile
 import tqdm
-import numpy as np
-import skimage.transform
+import zarr
 from loguru import logger
 
-from . import img_util
 from . import __version__ as _version
 
 
@@ -240,11 +241,12 @@ def tile_from_pyramid(
             num_channels,
             ascii=True, desc=f'Processing channel'
         ):
-        img = tifffile.imread(
-            path, is_ome=False, series=0, key=c, level=level
-        )
+        img = zarr.open(tifffile.imread(
+            path, series=0, level=level, aszarr=True
+        ))[c]
+        # read using key seems to generate a RAM spike
+        # img = tifffile.imread(path, series=0, level=level, key=c)
         if not is_mask:
-            import cv2
             cv2.blur(
                 img, ksize=(downscale_factor, downscale_factor), anchor=(0, 0), dst=img
             )
