@@ -1,6 +1,7 @@
 import math
 
 import cv2
+import dask.array as da
 import numpy as np
 import tifffile
 import tqdm
@@ -222,11 +223,11 @@ def tile_from_combined_mosaics(mosaics, tile_shape):
                     f" {cidx+1:2}/{m.shape[0]:2})"
                 ),
             ):
-                c = c.compute()
+                c.persist()
             for y in range(0, num_rows, h):
                 for x in range(0, num_cols, w):
                     yield np.array(c[y:y+h, x:x+w])
-                # yield m[y:y+h, x:x+w].copy().compute()
+                    # yield m[y:y+h, x:x+w].copy().compute()
 
 
 def tile_from_pyramid(
@@ -238,18 +239,20 @@ def tile_from_pyramid(
     is_mask=False
 ):
     for c in tqdm.trange(
-            num_channels,
-            ascii=True, desc=f'Processing channel'
-        ):
-        img = zarr.open(tifffile.imread(
+        num_channels,
+        ascii=True, desc=f'Processing channel'
+    ):
+        img = da.from_zarr(zarr.open(tifffile.imread(
             path, series=0, level=level, aszarr=True
-        ))[c]
+        )))[c]
         # read using key seems to generate a RAM spike
         # img = tifffile.imread(path, series=0, level=level, key=c)
         if not is_mask:
-            cv2.blur(
-                img, ksize=(downscale_factor, downscale_factor), anchor=(0, 0), dst=img
+            img = img.map_blocks(
+                cv2.blur, 
+                ksize=(downscale_factor, downscale_factor), anchor=(0, 0)
             )
+        img.persist()
         num_rows, num_columns = img.shape
         h, w = tile_shape
         h *= downscale_factor
