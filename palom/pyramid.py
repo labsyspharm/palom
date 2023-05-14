@@ -242,10 +242,10 @@ def tile_from_pyramid(
     is_mask=False,
     save_RAM=False
 ):
-    for c in tqdm.trange(
-        num_channels,
-        ascii=True, desc=f'Processing channel'
-    ):
+    # workaround progress bar
+    # https://forum.image.sc/t/tifffile-ome-tiff-generation-is-taking-too-much-ram/41865/26
+    pbar = tqdm.tqdm(total=num_channels, ascii=True, desc=f'Processing channel')
+    for c in range(num_channels):
         img = da.from_zarr(zarr.open(tifffile.imread(
             path, series=0, level=level, aszarr=True
         )))[c]
@@ -261,7 +261,13 @@ def tile_from_pyramid(
         h, w = tile_shape
         h *= downscale_factor
         w *= downscale_factor
+        last_y = range(0, num_rows, h)[-1]
+        last_x = range(0, num_columns, w)[-1]
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):
+                if (y == last_y) & (x == last_x):
+                    pbar.update(1)
                 yield np.array(img[y:y+h:downscale_factor, x:x+w:downscale_factor])
+        # setting img to None seems necessary to prevent RAM spike
         img = None
+    pbar.close()
