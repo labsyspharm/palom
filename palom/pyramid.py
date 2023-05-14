@@ -116,7 +116,8 @@ def write_pyramid(
     downscale_factor=4,
     compression=None,
     is_mask=False,
-    tile_size=None
+    tile_size=None,
+    save_RAM=False
 ):
     mosaics = normalize_mosaics(mosaics)
     ref_m = mosaics[0]
@@ -166,7 +167,7 @@ def write_pyramid(
     with tifffile.TiffWriter(path, bigtiff=True) as tif:
         tif.write(
             data=tile_from_combined_mosaics(
-                mosaics, tile_shape=tile_shapes[0]
+                mosaics, tile_shape=tile_shapes[0], save_RAM=save_RAM
             ),
             metadata=metadata,
             software=software,
@@ -189,7 +190,8 @@ def write_pyramid(
                     tile_shape=tile_shape,
                     downscale_factor=downscale_factor,
                     level=level,
-                    is_mask=is_mask
+                    is_mask=is_mask,
+                    save_RAM=save_RAM
                 ),
                 shape=(num_channels, *shape),
                 subfiletype=1,
@@ -208,7 +210,7 @@ def count_num_channels(imgs):
     ])
     
 
-def tile_from_combined_mosaics(mosaics, tile_shape):
+def tile_from_combined_mosaics(mosaics, tile_shape, save_RAM=False):
     num_rows, num_cols = mosaics[0].shape[1:3]
     h, w = tile_shape
     n = len(mosaics)
@@ -223,11 +225,12 @@ def tile_from_combined_mosaics(mosaics, tile_shape):
                     f" {cidx+1:2}/{m.shape[0]:2})"
                 ),
             ):
-                c.persist()
+                c = c.persist() if save_RAM else c.compute()
             for y in range(0, num_rows, h):
                 for x in range(0, num_cols, w):
                     yield np.array(c[y:y+h, x:x+w])
                     # yield m[y:y+h, x:x+w].copy().compute()
+            c = None
 
 
 def tile_from_pyramid(
@@ -236,7 +239,8 @@ def tile_from_pyramid(
     tile_shape,
     downscale_factor=2,
     level=0,
-    is_mask=False
+    is_mask=False,
+    save_RAM=False
 ):
     for c in tqdm.trange(
         num_channels,
@@ -252,7 +256,7 @@ def tile_from_pyramid(
                 cv2.blur, 
                 ksize=(downscale_factor, downscale_factor), anchor=(0, 0)
             )
-        img.persist()
+        img = img.persist() if save_RAM else img.compute()
         num_rows, num_columns = img.shape
         h, w = tile_shape
         h *= downscale_factor
@@ -260,3 +264,4 @@ def tile_from_pyramid(
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):
                 yield np.array(img[y:y+h:downscale_factor, x:x+w:downscale_factor])
+        img = None
