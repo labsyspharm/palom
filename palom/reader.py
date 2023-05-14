@@ -106,6 +106,7 @@ class OmePyramidReader(DaPyramidChannelReader):
         pixel_size: float | None = None
     ) -> None:
         self.path = pathlib.Path(path)
+        self._zarr = self.zarr_from_tiff(self.path)
         pyramid = self.pyramid_from_ometiff(self.path)
         channel_axis = 0
         self._pixel_size = pixel_size
@@ -122,7 +123,7 @@ class OmePyramidReader(DaPyramidChannelReader):
         self.__init__(path=state['path'], pixel_size=state['_pixel_size'])
 
     @staticmethod
-    def pyramid_from_ometiff(path: str | pathlib.Path) -> list[da.Array]:
+    def zarr_from_tiff(path: str | pathlib.Path) -> list[zarr.Array]:
         with tifffile.TiffFile(path) as tif:
             num_series = len(tif.series)
             if num_series == 1:
@@ -133,19 +134,35 @@ class OmePyramidReader(DaPyramidChannelReader):
                 zarr.open(level.aszarr(), 'r')
                 for level in pyramid
             ]
-            da_pyramid = []
-            for z in zarr_pyramid:
-                if issubclass(type(z), zarr.hierarchy.Group):
-                    da_level = da.from_zarr(z[0])
-                else:
-                    da_level = da.from_zarr(z)
-                if da_level.ndim == 2:
-                    da_level = da_level.reshape(1, *da_level.shape)
-                if da_level.ndim == 3:
-                    if da_level.shape[2] in (3, 4):
-                        da_level = da.moveaxis(da_level, 2, 0)
-                da_pyramid.append(da_level)
-            return da_pyramid
+            return [
+                z[0]
+                if issubclass(type(z), zarr.hierarchy.Group)
+                else z
+                for z in zarr_pyramid
+            ]
+
+    @staticmethod
+    def pyramid_from_ometiff(path: str | pathlib.Path) -> list[da.Array]:
+        zarr_pyramid = OmePyramidReader.zarr_from_tiff(path)
+        da_pyramid = []
+        # FIXME should push the reshape code in to base `DaPyramidChannelReader`
+        for z in zarr_pyramid:
+            da_level = da.from_zarr(z).squeeze()
+            if da_level.ndim == 2:
+                da_level = da_level.reshape(1, *da_level.shape)
+            elif da_level.ndim == 3:
+                axis_min = np.argmin(da_level.shape)
+                if axis_min != 0:
+                    da_level = da.moveaxis(da_level, axis_min, 0)
+                    logger.warning(
+                        f'Axis swapped. Ori: {z.shape} new: {da_level.shape}'
+                    )
+            else:
+                logger.error(
+                    f'Image shape ({z.shape}) of file <{path}> is not supported'
+                )
+            da_pyramid.append(da_level)
+        return da_pyramid
 
     @property
     def pixel_size(self) -> float:
