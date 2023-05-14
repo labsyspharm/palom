@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import pathlib
-import zarr
+
 import dask.array as da
 import numpy as np
+import ome_types
 import tifffile
-import warnings
-
+import zarr
 from loguru import logger
 
 from . import pyramid as pyramid_util
@@ -137,7 +138,20 @@ class OmePyramidReader(DaPyramidChannelReader):
 
     @property
     def pixel_size(self) -> float:
-        return self._pixel_size
+        if self._pixel_size is not None:
+            return self._pixel_size
+        try:
+            ome = ome_types.from_tiff(
+                self.path, validate=False, parser='lxml'
+            )
+            return ome.images[0].pixels.physical_size_x
+        except Exception:
+            logger.warning(
+                f'Unable to parse pixel size from {self.path.name};'
+                f' assuming 1 µm. Use `_pixel_size` to set it manually'
+            )
+            self._pixel_size = 1
+            return self._pixel_size
 
 
 class SvsReader(DaPyramidChannelReader):

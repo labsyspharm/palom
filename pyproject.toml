@@ -30,6 +30,8 @@ dask = ">=2021.10.0"
 numpy = "^1.21.3"
 yamale = "^4.0.2"
 loguru = "^0.5.3"
+ome-types = ">0.3"
+
 
 [build-system]
 requires = ["poetry-core"]
