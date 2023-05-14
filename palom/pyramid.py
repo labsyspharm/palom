@@ -117,7 +117,8 @@ def write_pyramid(
     compression=None,
     is_mask=False,
     tile_size=None,
-    save_RAM=False
+    save_RAM=False,
+    kwargs_tifffile=None
 ):
     mosaics = normalize_mosaics(mosaics)
     ref_m = mosaics[0]
@@ -165,17 +166,22 @@ def write_pyramid(
 
     logger.info(f"Writing to {path}")
     with tifffile.TiffWriter(path, bigtiff=True) as tif:
+        kwargs = dict(
+            metadata=metadata,
+            software=software,
+            compression=compression
+        )
+        if kwargs_tifffile is None:
+            kwargs_tifffile = {}
         tif.write(
             data=tile_from_combined_mosaics(
                 mosaics, tile_shape=tile_shapes[0], save_RAM=save_RAM
             ),
-            metadata=metadata,
-            software=software,
             shape=(num_channels, *shapes[0]),
             subifds=int(num_levels - 1),
             dtype=dtype,
-            compression=compression,
-            tile=tile_shapes[0]
+            tile=tile_shapes[0],
+            **{**kwargs, **kwargs_tifffile}
         )
         logger.info('Generating pyramid')
         for level, (shape, tile_shape) in enumerate(
@@ -261,13 +267,15 @@ def tile_from_pyramid(
         h, w = tile_shape
         h *= downscale_factor
         w *= downscale_factor
+        last_c = range(num_channels)[-1]
         last_y = range(0, num_rows, h)[-1]
         last_x = range(0, num_columns, w)[-1]
         for y in range(0, num_rows, h):
             for x in range(0, num_columns, w):
                 if (y == last_y) & (x == last_x):
                     pbar.update(1)
+                    if c == last_c:
+                        pbar.close()
                 yield np.array(img[y:y+h:downscale_factor, x:x+w:downscale_factor])
         # setting img to None seems necessary to prevent RAM spike
         img = None
-    pbar.close()
