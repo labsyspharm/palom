@@ -70,8 +70,8 @@ def optical_flow(
         chunk1 = Reader(p1).pyramid[0][ch1, slice(*rloc), slice(*cloc)]
         chunk2 = Reader(p2).pyramid[0][ch2, slice(*rloc), slice(*cloc)]
         chunk_mask = mask[
-            slice(*np.divide(rloc, block_size).astype(int)),
-            slice(*np.divide(cloc, block_size).astype(int))
+            slice(*np.ceil(np.divide(rloc, block_size)).astype(int)),
+            slice(*np.ceil(np.divide(cloc, block_size)).astype(int))
         ]
         return block_optical_flow(chunk1, chunk2, block_size, mask=chunk_mask)
     
@@ -100,6 +100,7 @@ def block_optical_flow(
     img1 = np.asarray(img1)
     img2 = np.asarray(img2)
     block_shape = (block_size, block_size)
+    block_shape = np.min(np.vstack([img1.shape, block_shape]), axis=0)
     wv_img1 = skimage.util.view_as_windows(img1, block_shape, block_shape)
     wv_img2 = skimage.util.view_as_windows(img2, block_shape, block_shape)
     h, w = wv_img1.shape[:2]
