@@ -236,11 +236,13 @@ class Aligner:
             img.shape,
             np.divide(self.ref_img.chunksize, self.ref_thumbnail_down_factor)
         )
-        cmap = 'grays_r' if img_util.is_brightfield_img(img) else 'gray'
+        cmap = 'gray_r' if img_util.is_brightfield_img(img) else 'gray'
+        func = np.array if img_util.is_brightfield_img(img) else np.log1p
+
         if ax is None:
             _, ax = plt.subplots()
         ax.imshow(
-            np.log1p(img),
+            func(img),
             cmap=cmap,
             extent=(-0.5, w-0.5, h-0.5, -0.5)
         )

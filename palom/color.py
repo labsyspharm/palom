@@ -48,7 +48,8 @@ class HaxProcessor:
 
     def rgb2grayscale(self, rgb_img):
         import cv2
-        return cv2.cvtColor(rgb_img, cv2.COLOR_BGR2GRAY)
+        # FIXME should be cv2.COLOR_RGB2GRAY
+        return cv2.cvtColor(rgb_img, cv2.COLOR_RGB2GRAY)
         # return skimage.color.rgb2gray(rgb_img).astype(np.float32)
 
     def rgb2aec(self, rgb_img):
