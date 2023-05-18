@@ -116,7 +116,7 @@ Running the following command to generate the configuration file
 palom-svs-helper -i "Y:\DATA\SARDANA\MIHC\768473\RAW" -n "*Hem*" -o "Y:\DATA\SARDANA\MIHC\768473\RAW\palom\768473.ome.tif" -c "Y:\DATA\SARDANA\MIHC\768473\768473.yml"
 ```
 
-And the resulting `Y:\DATA\SARDANA\MIHC\768473\768473.yml` file 
+And the resulting `Y:\DATA\SARDANA\MIHC\768473\768473.yml` file
 
 ```yaml
 input dir: Y:\DATA\SARDANA\MIHC\768473\RAW
@@ -153,7 +153,7 @@ palom-svs run -c "Y:\DATA\SARDANA\MIHC\768473\768473.yml"
 ```
 
 When the process is finished, a pyramidal OME-TIFF file will be generated along
-with PNG files showing the feature-based registration results and a log file. 
+with PNG files showing the feature-based registration results and a log file.
 
 ```
 Y:\DATA\SARDANA\MIHC\768473\RAW
@@ -199,7 +199,7 @@ c1rp = palom.color.PyramidHaxProcessor(c1r.pyramid, thumbnail_level=THUMBNAIL_LE
 c2rp = palom.color.PyramidHaxProcessor(c2r.pyramid, thumbnail_level=THUMBNAIL_LEVEL)
 
 c21l = palom.align.Aligner(
-    c1rp.get_processed_color(LEVEL), 
+    c1rp.get_processed_color(LEVEL),
     c2rp.get_processed_color(LEVEL),
     ref_thumbnail=c1rp.get_processed_color(THUMBNAIL_LEVEL).compute(),
     moving_thumbnail=c2rp.get_processed_color(THUMBNAIL_LEVEL).compute(),

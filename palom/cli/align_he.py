@@ -42,16 +42,16 @@ def align_he(
     aligner.coarse_register_affine(n_keypoints=5000, detect_flip_rotate=True)
     plt.gcf().suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     plt.gca().set_title(f"{p1.name} - {p2.name}", fontsize=6)
-    
+   
     if viz_coarse_napari:
         _ = viz_coarse(r1, r2, LEVEL, LEVEL, channel1, channel2, aligner.affine_matrix)
 
     if not only_coarse:
         aligner.ref_img = r1.read_level_channels(LEVEL, channel1)
         aligner.moving_img = r2.read_level_channels(LEVEL, channel2)
-        
+       
         aligner.compute_shifts()
-        
+       
         fig = aligner.plot_shifts()
         fig.suptitle(f"{p2.name} (block shift distance)", fontsize=8)
         fig.axes[0].set_title(p1.name, fontsize=6)
@@ -60,9 +60,9 @@ def align_he(
 
     set_matplotlib_font(font_size=8)
     save_all_figs(out_dir=out_dir / 'qc', format='png')
-    
+   
     if not only_qc:
-        mx = aligner.affine_matrix 
+        mx = aligner.affine_matrix
         if not only_coarse:
             mx = aligner.block_affine_matrices_da
         mosaic = palom.align.block_affine_transformed_moving_img(
@@ -84,7 +84,7 @@ def viz_coarse(r1, r2, level1, level2, channel1, channel2, mx):
     try:
         import napari
     except ImportError:
-        return 
+        return
     import dask.array as da
     v = napari.Viewer()
     is_bf1 = palom.img_util.is_brightfield_img(r1.pyramid[-1][channel1])
@@ -139,7 +139,7 @@ if __name__ == '__main__':
         try: import napari
         except ImportError: print("napari is not installed")
         else: napari.run()
-    
+   
     '''
     Example 1: inspect coarse alignment using napari
     python align_he.py \
@@ -154,6 +154,6 @@ if __name__ == '__main__':
         "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\22199$P54_33_HE$US$SCAN$OR$001 _104050.svs" \
         "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\test" \
         --px_size1 0.325
-    
+   
     '''
     

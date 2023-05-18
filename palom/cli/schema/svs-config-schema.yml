@@ -31,7 +31,7 @@ image collection: any(include('bright-field image'), include('fluorescent image'
 
 _image_base: &_image_base
     # Filename or the remaining path to the imaging data relative to the input
-    # dir field 
+    # dir field
     filename: str()
     # [optional but recommended]
     # Channel name in the output ome-tiff
@@ -43,7 +43,7 @@ bright-field image:
     channel names: list(str(), min=1, max=3, required=False)
     # Output color mode, currently the following 4 modes are available
     output mode: enum('aec', 'hematoxylin', 'color', 'grayscale', 'dab')
-  
+ 
 fluorescent image:
     <<: *_image_base
     output mode: str(equals='multichannel')

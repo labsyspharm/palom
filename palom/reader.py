@@ -30,11 +30,11 @@ class DaPyramidChannelReader:
             assert level.ndim == 3, ''
             if np.argmin(level.shape) != channel_axis:
                 logger.warning(
-                    f"level {i} has shape of {level.shape} while given" 
+                    f"level {i} has shape of {level.shape} while given"
                     f" `channel_axis` is {channel_axis}"
                 )
         return True
-    
+   
     def normalize_axis_order(self):
         if self.channel_axis == 0:
             return self.pyramid
@@ -83,7 +83,7 @@ class DaPyramidChannelReader:
             i: round(self.pyramid[0].shape[1] / level.shape[1])
             for i, level in enumerate(self.pyramid)
         }
-    
+   
     @property
     def pixel_dtype(self) -> np.dtype:
         return self.pyramid[0].dtype
@@ -151,7 +151,7 @@ class SvsReader(DaPyramidChannelReader):
         # https://python-poetry.org/docs/pyproject/#extras
         # https://github.com/AllenCellModeling/aicsimageio/blob/main/aicsimageio/readers/bioformats_reader.py#L33-L40
         from napari_lazy_openslide import OpenSlideStore
-        
+       
         self.path = pathlib.Path(path)
         self.store = OpenSlideStore(str(self.path))
         self.zarr = zarr.open(self.store, mode='r')
@@ -165,7 +165,7 @@ class SvsReader(DaPyramidChannelReader):
             da.from_zarr(self.store, component=d['path'])[..., :3]
             for d in self.zarr.attrs['multiscales'][0]['datasets']
         ]
-    
+   
     @property
     def pixel_size(self):
         if self._pixel_size is not None:

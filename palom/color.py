@@ -22,13 +22,13 @@ class HaxProcessor:
     def find_processed_color_contrast_range(self, mode: str):
         supported_modes = ['grayscale', 'hematoxylin', 'aec', 'dab']
         assert mode in supported_modes
-        
+       
         mode_range = f'_{mode}_range'
         if hasattr(self, mode_range):
             return getattr(self, mode_range)
-        
+       
         contrast_ref_img = self.contrast_img
-        
+       
         process_func = self.__getattribute__(f"rgb2{mode}")
         img = process_func(contrast_ref_img)
 
@@ -68,7 +68,7 @@ class HaxProcessor:
 
         process_func = self.__getattribute__(f"rgb2{mode}")
         intensity_range = self.find_processed_color_contrast_range(mode)
-        
+       
         processed = da.map_blocks(
             process_func,
             rgb_img,
@@ -96,7 +96,7 @@ class PyramidHaxProcessor(HaxProcessor):
             thumbnail_level = len(pyramid) - 1
         super().__init__(pyramid[thumbnail_level], channel_axis=0)
         self.pyramid = pyramid
-    
+   
     def get_processed_color(self, level, mode='grayscale', out_dtype=None):
         if mode == 'color':
             return self.pyramid[level]

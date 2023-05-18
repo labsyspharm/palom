@@ -93,12 +93,12 @@ def viz_shifts(shifts, grid_shape, dcenter=None, ax=None):
     cax = ax.inset_axes([1.04, 0.0, 0.02, 1])
     colorbar = plt.colorbar(im, cax=cax)
     colorbar.set_ticks(colorbar_ticks)
-    
+   
     return ax
 
 
 def block_affine_matrices(mx, shifts):
-        
+       
     def shift_affine_mx(mx, shift):
         y, x = shift
         mx_shift = np.eye(3)
@@ -155,7 +155,7 @@ class Aligner:
         self.coarse_affine_matrix = np.vstack(
             [affine_matrix, [0, 0, 1]]
         )
-    
+   
     @property
     def affine_matrix(self):
         if not hasattr(self, 'coarse_affine_matrix'):
@@ -169,13 +169,13 @@ class Aligner:
             mx_moving
         )
         return affine_matrix
-    
+   
     @property
     def tform(self):
         return skimage.transform.AffineTransform(
             matrix=self.affine_matrix
         )
-    
+   
     def affine_transformed_moving_img(self, mxs=None):
         if mxs is None:
             mxs = self.affine_matrix
@@ -185,7 +185,7 @@ class Aligner:
         return block_affine_transformed_moving_img(
             ref_img, moving_img, mxs
         )
-    
+   
     def compute_shifts(self, pcc_kwargs=None):
         logger.info(f"Computing block-wise shifts")
         ref_img = self.ref_img
@@ -212,7 +212,7 @@ class Aligner:
             self.original_shifts,
             self.grid_shape
         )
-    
+   
     @property
     def block_affine_matrices(self):
         mx = self.affine_matrix
@@ -226,7 +226,7 @@ class Aligner:
             self.grid_shape
         )
 
-    def overlay_grid(self, ax=None): 
+    def overlay_grid(self, ax=None):
         import matplotlib.pyplot as plt
         img = self.ref_thumbnail
         img = skimage.exposure.rescale_intensity(img, out_range=np.uint16)
@@ -249,7 +249,7 @@ class Aligner:
         # checkerboard pattern
         ax.imshow(np.indices(shape).sum(axis=0) % 2, cmap='cool', alpha=0.2)
         return grid
-    
+   
     def plot_shifts(self):
         import matplotlib.pyplot as plt
         fig, axs = plt.subplots(1, 2, sharex=True, sharey=True)
@@ -271,14 +271,14 @@ def get_aligner(
         )
     if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
     if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
-    return Aligner( 
-        reader1.read_level_channels(level1, channel1),  
-        reader2.read_level_channels(level2, channel2), 
-        reader1.read_level_channels(thumbnail_level1, channel1), 
-        reader2.read_level_channels(thumbnail_level2, channel2), 
-        reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1], 
-        reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2] 
-    ) 
+    return Aligner(
+        reader1.read_level_channels(level1, channel1), 
+        reader2.read_level_channels(level2, channel2),
+        reader1.read_level_channels(thumbnail_level1, channel1),
+        reader2.read_level_channels(thumbnail_level2, channel2),
+        reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1],
+        reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2]
+    )
 
 
 def match_thumbnail_level(readers):

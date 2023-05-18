@@ -135,10 +135,10 @@ def write_pyramid(
     tile_shapes = pyramid_setting.tile_shapes(base_shape)
     shapes = pyramid_setting.pyramid_shapes(base_shape)
 
-    if tile_size is not None: 
-        assert tile_size % 16 == 0, ( 
-            f"tile_size must be None or multiples of 16, not {tile_size}" 
-        ) 
+    if tile_size is not None:
+        assert tile_size % 16 == 0, (
+            f"tile_size must be None or multiples of 16, not {tile_size}"
+        )
         tile_shapes = [(tile_size, tile_size)] * num_levels
 
     dtype = ref_m.dtype
@@ -214,7 +214,7 @@ def count_num_channels(imgs):
         1 if img.ndim == 2 else img.shape[0]
         for img in imgs
     ])
-    
+   
 
 def tile_from_combined_mosaics(mosaics, tile_shape, save_RAM=False):
     num_rows, num_cols = mosaics[0].shape[1:3]
@@ -259,7 +259,7 @@ def tile_from_pyramid(
         # img = tifffile.imread(path, series=0, level=level, key=c)
         if not is_mask:
             img = img.map_blocks(
-                cv2.blur, 
+                cv2.blur,
                 ksize=(downscale_factor, downscale_factor), anchor=(0, 0)
             )
         img = img.persist() if save_RAM else img.compute()

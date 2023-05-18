@@ -61,7 +61,7 @@ def optical_flow(
     if mask is None:
         mask = np.ones(mask_shape, dtype=bool)
     assert mask.shape == mask_shape
-    
+   
     def func(
         p1, p2, ch1, ch2, mask,
         block_info=None
@@ -74,7 +74,7 @@ def optical_flow(
             slice(*np.ceil(np.divide(cloc, block_size)).astype(int))
         ]
         return block_optical_flow(chunk1, chunk2, block_size, mask=chunk_mask)
-    
+   
     shifts = da.map_blocks(
         func,
         p1=p1, p2=p2, ch1=ch1, ch2=ch2, mask=mask,
@@ -104,12 +104,12 @@ def block_optical_flow(
     wv_img1 = skimage.util.view_as_windows(img1, block_shape, block_shape)
     wv_img2 = skimage.util.view_as_windows(img2, block_shape, block_shape)
     h, w = wv_img1.shape[:2]
-    
+   
     wv_mask = np.ones((h, w, 1, 1), dtype=bool)
     if mask is not None:
         wv_mask = mask[..., np.newaxis, np.newaxis]
         wv_mask = wv_mask[..., :h, :w]
-    
+   
     out = np.zeros((3, h, w), dtype=np.float32)
     product_func = itertools.product
     if show_progress:
@@ -158,7 +158,7 @@ def compose_thumbnail(p1, p2, ch1, ch2, log_intensity=True):
     rimg2 = skimage.exposure.match_histograms(rimg2, rimg1)
     out = np.array([rimg1, rimg2, rimg1])
     return out
- 
+
 
 def plot_legend(
     shifts, max_radius, plot_scatter, plot_kde,
@@ -252,7 +252,7 @@ def process_img_channel_pair(
     mask = None
     if compute_mask:
         mask = reader_block_mask(reader, block_size)
-    
+   
     num_cpus = dask.system.cpu_count()
     if num_workers > num_cpus:
         num_workers =num_cpus
@@ -309,7 +309,7 @@ def process_img_channel_pair(
 
         for ax in fig.get_axes():
             ax.set_anchor('N')
-        
+       
         plt.tight_layout()
         out_dir = img_path.parent / 'qc'
         out_dir.mkdir(exist_ok=True)
@@ -318,7 +318,7 @@ def process_img_channel_pair(
             bbox_inches='tight', dpi=144
         )
         figures.append(fig)
-    
+   
     if as_script: return
     return all_shifts, figures
 
@@ -354,15 +354,15 @@ if __name__ == '__main__':
         -a, --as_script=AS_SCRIPT
             Default: True
 
-    --- 
-    
+    ---
+   
     NOTE: OTHER_CHANNELS is a list of integers, use [1] to indicate the
     second channel and [1,2,3] (do not include space) for second, third and
     fourth channels.
 
     Ref https://google.github.io/python-fire/guide/#argument-parsing
-    
-    Examples 
+   
+    Examples
 
     python flow.py \
         "Z:\RareCyte-S3\P54_CRCstudy_Bridge\S32-Tonsil-P54_Strip_P76.ome.tif" \

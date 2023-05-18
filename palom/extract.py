@@ -15,7 +15,7 @@ def imagej_rgb2cmyk(rgb_img):
 
     cmy = 1-rgb
     k = cmy.min(axis=0)
-    
+   
     s = 1-k
 
     with warnings.catch_warnings():

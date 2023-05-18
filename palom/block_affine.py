@@ -30,13 +30,13 @@ def block_affine_dask(
 
 
 def block_affine(
-    position, block_shape, 
+    position, block_shape,
     transformation, src_img,
     fill_empty=0, multichannel=False,
     is_mask=False
 ):
     assert np.min(block_shape) >= 0, (
-        f'block_shape {block_shape} is invalid' 
+        f'block_shape {block_shape} is invalid'
     )
     if multichannel:
         assert np.min(block_shape) == block_shape[0], (
@@ -68,7 +68,7 @@ def block_affine(
     x0_src, y0_src = np.floor(
         np.clip(inversed_corners.min(axis=0), 0, None)
     ).astype(int)
-    
+   
     if multichannel:
         src_img_block = src_img[:, y0_src:y1_src, x0_src:x1_src]
         src_img_block = np.moveaxis(src_img_block, 0, 2)

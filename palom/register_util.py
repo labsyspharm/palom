@@ -42,7 +42,7 @@ def match_bf_fl_histogram(img1, img2):
     # TODO does it make a difference to min/max rescale before histogram
     # matching?
     is_bf_img1, is_bf_img2 = [
-        img_util.is_brightfield_img(i) 
+        img_util.is_brightfield_img(i)
         for i in (img1, img2)
     ]
     if is_bf_img1 == is_bf_img2:
@@ -61,7 +61,7 @@ def plot_img_keypoints(imgs, keypoints):
             flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT
         ))
         a.set_title(len(k))
-    return 
+    return
 
 
 def get_flip_mx(img_shape, flip_axis):

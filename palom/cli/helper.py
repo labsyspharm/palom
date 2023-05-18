@@ -11,7 +11,7 @@ def main(argv=sys.argv):
             'Generate configuration yaml file for palom-svs run'
         )
     )
-    
+   
     parser.add_argument(
         '-i',
         metavar='input-dir',
@@ -36,9 +36,9 @@ def main(argv=sys.argv):
         help='full path to the resulting configuration yaml file',
         required=True
     )
-    
+   
     args = parser.parse_args(argv[1:])
-    
+   
     if len(argv) == 1:
         parser.print_help()
         return 0
@@ -68,7 +68,7 @@ def main(argv=sys.argv):
     )
 
     channel_names = [
-        '-'.join(p.name.split('_')[-2:][::-1]).replace('.svs', '') 
+        '-'.join(p.name.split('_')[-2:][::-1]).replace('.svs', '')
         for p in ([ref_slide] + svs_paths)
     ]
 

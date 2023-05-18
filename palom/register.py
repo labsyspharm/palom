@@ -19,15 +19,15 @@ else:
     register_translation = skimage.feature.register_translation
 
 
-# 
+#
 # Image-based registration
-# 
+#
 def phase_cross_correlation(img1, img2, sigma, upsample=10, module='skimage'):
     assert module in ['cv2', 'skimage']
-    
+   
     img1w = img_util.whiten(img1, sigma)
     img2w = img_util.whiten(img2, sigma)
-    
+   
     if module == 'skimage':
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -44,7 +44,7 @@ def phase_cross_correlation(img1, img2, sigma, upsample=10, module='skimage'):
             shift, _error, _phasediff = register_translation(
                 img1w, img2w, **kwargs
             )
-    
+   
     elif module == 'cv2':
         shift_xy, _response = cv2.phaseCorrelate(img1w, img2w)
         shift = shift_xy[::-1]
@@ -75,7 +75,7 @@ def cv2_translate(img, shift):
     assert img.ndim == len(shift) == 2
     sy, sx = shift
     return cv2.warpAffine(
-        img,    
+        img,   
         np.array([[1, 0, sx], [0, 1, sy]], dtype=float),
         img.shape[::-1]
     )
@@ -91,9 +91,9 @@ def normalized_phase_correlation(img1, img2, sigma):
     return corr
 
 
-# 
+#
 # Feature-based registration
-# 
+#
 def feature_based_registration(
     img_left, img_right,
     detect_flip_rotate=False,
@@ -103,7 +103,7 @@ def feature_based_registration(
     flip_rotate_func, mx_fr = np.array, np.eye(3)
     if detect_flip_rotate:
         flip_rotate_func, mx_fr = match_test_flip_rotate(img_left, img_right)
-    
+   
     img_right = flip_rotate_func(img_right)
     mx_affine = ensambled_match(
         img_left, img_right,
@@ -180,7 +180,7 @@ def ensambled_match(
     all_dst = np.vstack([i[1] for i in all_found])
 
     t_matrix, mask = cv2.estimateAffine2D(
-        all_dst, all_src, 
+        all_dst, all_src,
         method=cv2.RANSAC,
         ransacReprojThreshold=ransacReprojThreshold,
         maxIters=5000
@@ -231,7 +231,7 @@ def cv2_feature_detect_and_match(
         [keypoints_right[m.trainIdx].pt for m in matches]
     )
     t_matrix, mask = cv2.estimateAffine2D(
-        dst_pts, src_pts, 
+        dst_pts, src_pts,
         method=cv2.RANSAC, ransacReprojThreshold=30, maxIters=5000
     )
     if plot_match_result == True:

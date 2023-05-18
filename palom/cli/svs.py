@@ -67,11 +67,11 @@ def main(argv=sys.argv):
     parser_run.set_defaults(func=run)
 
     args = parser.parse_args(argv[1:])
-    
+   
     if len(argv) == 1:
         parser.print_help()
         return 0
-    
+   
     if args.version:
         print(f"palom v{_version}")
         return 0
@@ -110,7 +110,7 @@ def run(args):
     config_data = yamale.make_data(config_file.name)
     if validate_config(config_data) == 1:
         return 1
-    
+   
     config = config_data[0][0]
 
     LEVEL = 0
@@ -127,7 +127,7 @@ def run(args):
         DOWNSCALE_FACTOR = config['pyramid downscale factor']
 
     images = get_image_list(config)
-    
+   
     image_paths = [
         pathlib.Path(config['input dir']) / pathlib.Path(i['filename'])
         for i in images
@@ -166,7 +166,7 @@ def run(args):
         downscale_factor=DOWNSCALE_FACTOR
     )
 
-    logger.info(f"Finishing {config_file.name}")    
+    logger.info(f"Finishing {config_file.name}")   
     logger.remove(logger_id)
     # Can't `pathlib.Path.replace` across different disk drive
     shutil.copy(log_path, qc_path / f"{output_path.name}.log")
@@ -209,8 +209,8 @@ def run_palom(
         )
 
         aligner.coarse_register_affine()
-        
-        # FIXME move the saving figure logic 
+       
+        # FIXME move the saving figure logic
         plt.suptitle(f"L: {ref_reader.path.name}\nR: {p.name}")
         fig_w = max(plt.gca().get_xlim())
         fig_h = max(plt.gca().get_ylim()) + 100
@@ -219,12 +219,12 @@ def run_palom(
         plt.tight_layout()
         plt.savefig(qc_path / f"{idx+1:02d}-{p.name}.png", dpi=72)
         plt.close()
-        
+       
         aligner.compute_shifts()
         aligner.constrain_shifts()
 
         block_affines.append(aligner.block_affine_matrices_da)
-    
+   
     mosaics = []
     m_ref = ref_color_proc.get_processed_color(level=level, mode=img_modes[0])
     mosaics.append(m_ref)
