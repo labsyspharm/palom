@@ -55,10 +55,11 @@ def entropy_mask(img, kernel_size=9):
 def is_brightfield_img(img, max_size=100):
     img = np.array(img)
     downscale_factor = int(max(img.shape) / max_size)
-    thumbnail = cv2_downscale_local_mean(img, (downscale_factor, downscale_factor))
-    mask = entropy_mask(thumbnail)
+    if downscale_factor > 1:
+        img = cv2_downscale_local_mean(img, downscale_factor)
+    mask = entropy_mask(img)
     # is using mean better?
-    return np.median(thumbnail[mask]) < np.median(thumbnail[~mask])
+    return np.median(img[mask]) < np.median(img[~mask])
 
 
 def block_labeled_mask(img_shape, block_shape, out_chunks=None):
