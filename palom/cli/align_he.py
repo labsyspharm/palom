@@ -17,6 +17,7 @@ def align_he(
     channel2: int = 2,
     px_size1: float = None,
     px_size2: float = None,
+    n_keypoints: int = 10000,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False
@@ -27,6 +28,7 @@ def align_he(
     out_path = out_dir / out_name
     assert ''.join(out_path.suffixes[-2:]) in ('.ome.tif', '.ome.tiff')
     out_path.parent.mkdir(exist_ok=True, parents=True)
+    set_matplotlib_font(font_size=8)
 
     r1 = get_reader(p1)(p1, pixel_size=px_size1)
     r2 = get_reader(p2)(p2, pixel_size=px_size2)
@@ -39,9 +41,10 @@ def align_he(
         level1=LEVEL, level2=LEVEL
     )
 
-    aligner.coarse_register_affine(n_keypoints=5000, detect_flip_rotate=True)
+    aligner.coarse_register_affine(n_keypoints=n_keypoints, detect_flip_rotate=True)
     plt.gcf().suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     plt.gca().set_title(f"{p1.name} - {p2.name}", fontsize=6)
+    save_all_figs(out_dir=out_dir / 'qc', format='png')
    
     if viz_coarse_napari:
         _ = viz_coarse(r1, r2, LEVEL, LEVEL, channel1, channel2, aligner.affine_matrix)
@@ -55,11 +58,9 @@ def align_he(
         fig = aligner.plot_shifts()
         fig.suptitle(f"{p2.name} (block shift distance)", fontsize=8)
         fig.axes[0].set_title(p1.name, fontsize=6)
+        save_all_figs(out_dir=out_dir / 'qc', format='png')
 
         aligner.constrain_shifts()
-
-    set_matplotlib_font(font_size=8)
-    save_all_figs(out_dir=out_dir / 'qc', format='png')
    
     if not only_qc:
         mx = aligner.affine_matrix
@@ -75,7 +76,11 @@ def align_he(
             output_path=out_path,
             pixel_size=px_size1*r1.level_downsamples[LEVEL],
             channel_names=[list('RBG')],
-            compression='zlib'
+            compression='zlib',
+            downscale_factor=2,
+            save_RAM=True,
+            tile_size=1024,
+            kwargs_tifffile=dict(photometric='rgb', planarconfig='separate')
         )
     return 0
 
@@ -135,7 +140,7 @@ if __name__ == '__main__':
 
     fire.Fire(align_he)
 
-    if '--viz_coarse_napari' in sys.argv:
+    if ('--viz_coarse_napari' in sys.argv) or ('-v' in sys.argv):
         try: import napari
         except ImportError: print("napari is not installed")
         else: napari.run()
