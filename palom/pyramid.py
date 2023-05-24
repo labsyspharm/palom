@@ -202,8 +202,11 @@ def write_pyramid(
                 shape=(num_channels, *shape),
                 subfiletype=1,
                 dtype=dtype,
-                compression=compression,
-                tile=tile_shape
+                tile=tile_shape,
+                **{
+                    **dict(compression=compression),
+                    **kwargs_tifffile
+                }
             )
 
 
