@@ -133,15 +133,16 @@ def match_test_flip_rotate(img_left, img_right):
         for i in range(4)
     ]
 
-    # downsize images to < 500 px for speed
+    # downsize images to ~500 px for speed
     shape_max = max(*img_left.shape, *img_right.shape)
-    downsize_factor = int(np.ceil(shape_max / 500))
-    simg_left = img_left[::downsize_factor, ::downsize_factor]
-    simg_right = img_right[::downsize_factor, ::downsize_factor]
+    downsize_factor = int(np.floor(shape_max / 500))
+    if downsize_factor > 1:
+        img_left = img_util.cv2_downscale_local_mean(img_left, downsize_factor)
+        img_right = img_util.cv2_downscale_local_mean(img_right, downsize_factor)
 
     n_matches = [
         ensambled_match(
-            simg_left, rr(ff(simg_right)), return_match_mask=True
+            img_left, rr(ff(img_right)), return_match_mask=True
         )[1].sum()
         # only need half of the 4x4 combinations
         for ff, rr in itertools.product(flip_funcs[:2], rotate_funcs)
