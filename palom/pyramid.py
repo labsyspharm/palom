@@ -257,7 +257,10 @@ def tile_from_pyramid(
     for c in range(num_channels):
         img = da.from_zarr(zarr.open(tifffile.imread(
             path, series=0, level=level, aszarr=True
-        )))[c]
+        )))
+        if img.ndim == 2:
+            img = img.reshape(1, *img.shape)
+        img = img[c]
         # read using key seems to generate a RAM spike
         # img = tifffile.imread(path, series=0, level=level, key=c)
         if not is_mask:
