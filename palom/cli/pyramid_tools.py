@@ -53,9 +53,14 @@ def merge_channels(img_paths, out_path=None, overwrite=False, pyramid_config=Non
     palom.pyramid.write_pyramid(
         mosaics,
         out_path,
-        pixel_size=pixel_size,
-        kwargs_tifffile=tif_tags,
-        **{**PYRAMID_DEFAULTS, **pyramid_config}
+        **{
+            **dict(
+                pixel_size=pixel_size,
+                kwargs_tifffile=tif_tags,
+            ),
+            **PYRAMID_DEFAULTS,
+            **pyramid_config
+        }
     )
     return out_path
 
