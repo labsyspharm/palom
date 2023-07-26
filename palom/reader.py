@@ -111,6 +111,16 @@ class OmePyramidReader(DaPyramidChannelReader):
         self._pixel_size = pixel_size
         super().__init__(pyramid, channel_axis)
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['pyramid']
+        state['path'] = state['path'].resolve()
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__init__(path=state['path'], pixel_size=state['_pixel_size'])
+
     @staticmethod
     def pyramid_from_ometiff(path: str | pathlib.Path) -> list[da.Array]:
         with tifffile.TiffFile(path) as tif:
@@ -187,6 +197,16 @@ class SvsReader(DaPyramidChannelReader):
         pyramid = self.pyramid_from_svs()
         channel_axis = 2
         super().__init__(pyramid, channel_axis)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['pyramid'], state['store'], state['zarr']
+        state['path'] = state['path'].resolve()
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__init__(path=state['path'], pixel_size=state['_pixel_size'])
 
     def pyramid_from_svs(self) -> list[da.Array]:
         return [
