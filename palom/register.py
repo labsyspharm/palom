@@ -24,7 +24,11 @@ else:
 #
 def phase_cross_correlation(img1, img2, sigma, upsample=10, module='skimage'):
     assert module in ['cv2', 'skimage']
-   
+
+    if (np.unique(img1).size == 1) | (np.unique(img2).size == 1):
+        # FIXME does this make sense?
+        return (np.inf, np.inf), np.inf
+    
     img1w = img_util.whiten(img1, sigma)
     img2w = img_util.whiten(img2, sigma)
    

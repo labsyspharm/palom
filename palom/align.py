@@ -44,16 +44,17 @@ def block_shifts(ref_img, moving_img, pcc_kwargs=None):
 
 
 def constrain_block_shifts(shifts, grid_shape):
-    num_rows, num_cols = grid_shape
     distances = np.linalg.norm(shifts, axis=1)
+    is_finite = np.isfinite(distances)
+    # exclude np.inf when computing threshold
     threshold_distance = skimage.filters.threshold_triangle(
-        distances
+        distances[is_finite]
     )
 
     high_confidence_blocks = distances < threshold_distance
 
     lr = sklearn.linear_model.LinearRegression()
-    block_coords = np.mgrid[:num_rows, :num_cols].reshape(2, -1).T
+    block_coords = np.indices(grid_shape).reshape(2, -1).T
     lr.fit(
         block_coords[high_confidence_blocks],
         shifts[high_confidence_blocks]
@@ -63,7 +64,8 @@ def constrain_block_shifts(shifts, grid_shape):
     distance_diffs = np.linalg.norm(diffs, axis=1)
     passed = (
         distance_diffs <
-        skimage.filters.threshold_triangle(distance_diffs)
+        # exclude np.inf when computing threshold
+        skimage.filters.threshold_triangle(distance_diffs[is_finite])
     )
     fitted_shifts = shifts.copy()
     fitted_shifts[~passed] = predicted_shifts[~passed]
@@ -74,9 +76,12 @@ def viz_shifts(shifts, grid_shape, dcenter=None, ax=None):
     import matplotlib.pyplot as plt
     import matplotlib.colors
     distances = np.linalg.norm(shifts, axis=1)
+    is_finite = np.isfinite(distances)
     if dcenter is None:
-        dcenter = skimage.filters.threshold_triangle(distances)
-    dmin, dmax = np.percentile(distances, (0, 100))
+        # exclude np.inf when computing threshold
+        dcenter = skimage.filters.threshold_triangle(distances[is_finite])
+    # exclude np.inf when computing threshold
+    dmin, dmax = np.percentile(distances[is_finite], (0, 100))
     divnorm = matplotlib.colors.TwoSlopeNorm(dcenter, dmin, dmax)
     colorbar_ticks = np.concatenate(
         [np.linspace(dmin, dcenter, 5), np.linspace(dcenter, dmax, 5)[1:]]
@@ -293,7 +298,7 @@ def match_thumbnail_level(readers):
     px_sizes = [sorted(ss.keys()) for ss in level_px_sizes]
     target_px_size = min([max(ss) for ss in px_sizes])
     target_levels = [
-        lps[ps[np.argmin(np.square(np.array(ps) - target_px_size))]]
+        lps[ps[np.argmin(np.abs(np.array(ps) - target_px_size))]]
         for ps, lps in zip(px_sizes, level_px_sizes)
     ]
     return target_levels
