@@ -175,18 +175,20 @@ def plot_legend(
     if ax is None:
         _, ax = plt.subplots(1, 1)
     fig = ax.get_figure()
-    legend_raster = np.mgrid[-1:1:500j, -1:1:500j]
+    legend_raster = np.mgrid[-1:1:501j, -1:1:501j]
     legend_raster[:, np.linalg.norm(legend_raster, axis=0) > 1] = 0
 
     ax.imshow(
         skimage.color.lab2rgb(
             np.dstack(shifts_to_lab(legend_raster, l_factor=50, ab_factor=100))
         ),
-        # extent=(lower-.5, upper+.5, upper+.5, lower-.5)
-        extent=(lower, upper, upper, lower)
+        extent=(lower-.5, upper+.5, upper+.5, lower-.5)
+        # extent=(lower, upper, upper, lower)
     )
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    ax.set_xlim(xlim[0], xlim[1])
+    ax.set_ylim(ylim[0], ylim[1])
     if pad_plot:
-        xlim, ylim = ax.get_xlim(), ax.get_ylim()
         ax.set_xlim(xlim[0]-.5, xlim[1]+.5)
         ax.set_ylim(ylim[0]+.5, ylim[1]-.5)
     if not (plot_scatter or plot_kde or plot_flow):
@@ -207,16 +209,17 @@ def plot_legend(
         )
     if plot_kde:
         # composite flow legend with kde
-        density, _, _ = np.histogram2d(
+        density, ybins, xbins = np.histogram2d(
             y_shifts, x_shifts,
-            bins=50, density=True
+            bins=50, density=True,
         )
         density = scipy.ndimage.gaussian_filter(density, 1)
         ax.contour(
             density, levels=np.linspace(0, density.max(), 6)[1:],
-            # note that y axis is inverted
-            extent=(lower, upper, lower, upper),
-            cmap='viridis'
+            extent=(*xbins[[0, -1]], *ybins[[-1, 0]]),
+            origin='upper',
+            cmap='viridis',
+            linewidths=0.5
         )
     if plot_flow:
         fig_flow, ax_flow = plt.subplots(1, 1)
