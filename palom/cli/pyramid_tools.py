@@ -109,3 +109,17 @@ def compress_rarecyte_ome_tiff(img_path, out_path=None, overwrite=False):
         '</Channel><MetadataOnly></MetadataOnly><Plane'
     )
     return
+
+
+def main():
+    import fire
+    fire.Fire({
+        'merge': merge_channels,
+        'compress': compress_pyramid,
+        'compress-rarecyte': compress_rarecyte_ome_tiff,
+    })
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())
