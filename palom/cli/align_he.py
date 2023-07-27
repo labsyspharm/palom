@@ -17,7 +17,7 @@ def align_he(
     channel2: int = 2,
     px_size1: float = None,
     px_size2: float = None,
-    n_keypoints: int = 10000,
+    n_keypoints: int = 10_000,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -70,6 +70,7 @@ def align_he(
                 channel1=channel1, channel2=channel2,
                 thumbnail_channel1=thumbnail_channel1,
                 thumbnail_channel2=thumbnail_channel2,
+                min_num_blocks=25
             )
             mr_aligner._coarse_affine_matrix = aligner.coarse_affine_matrix
             mr_aligner.align()
@@ -78,7 +79,7 @@ def align_he(
             fig = mr_aligner.plot_shifts()
             fig.suptitle(f"{p2.name} (multires aligment)", fontsize=8)
             fig.axes[0].set_title(p1.name, fontsize=6)
-            save_all_figs(out_dir=out_dir / 'qc', format='png')
+            save_all_figs(out_dir=out_dir / 'qc', format='png', dpi=144)
 
             pickle_dir = out_dir / 'pickle'
             if not pickle_dir.exists():
