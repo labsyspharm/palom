@@ -2,7 +2,6 @@ import numpy as np
 
 # from . import register
 import palom.register as register
-import warnings
 
 
 def pc(img1, img2, sigma, mask=None):
@@ -19,22 +18,25 @@ def pc(img1, img2, sigma, mask=None):
 
 
 def shifts_to_lab(shifts, max_radius=None, l_factor=50, ab_factor=100):
+    if max_radius is not None:
+        assert max_radius > 0
+    # shifts is [np.inf, np.inf, np.inf] for blank block
+    valid = np.all(np.isfinite(shifts), axis=0)
+    # FIXME workaround to exclude masked blocks which are [0, 0, 0]
+    valid &= ~np.all(shifts == 0, axis=0)
+    
+    distances = np.where(valid, np.linalg.norm(shifts[:2], axis=0), np.nan)
     lab = np.zeros((3, *shifts[0].shape))
-    distances = np.linalg.norm(shifts[:2], axis=0)
+    
     if max_radius is None:
-        max_radius = distances.max()
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            'ignore', 'invalid value encountered in',
-            RuntimeWarning,
-        )
-        lab[1:3] = np.where(
-            distances < max_radius,
-            shifts[:2] / max_radius,
-            shifts[:2] / distances
-        )[::-1]
+        max_radius = np.nanmax(distances)
+    if max_radius == 0:
+        return lab
+    
+    # normalize the shift vectors
+    distances = np.clip(distances, max_radius, None)
+    lab[1:3, valid] = (shifts[:2, valid] / distances[valid])[::-1]
     lab[0] = np.linalg.norm(lab[1:3], axis=0)
-    # expected lab has range 0-100
     lab *= np.array([l_factor, ab_factor, ab_factor]).reshape(3, 1, 1)
     return lab
 
@@ -182,8 +184,8 @@ def plot_legend(
         skimage.color.lab2rgb(
             np.dstack(shifts_to_lab(legend_raster, l_factor=50, ab_factor=100))
         ),
-        extent=(lower-.5, upper+.5, upper+.5, lower-.5)
-        # extent=(lower, upper, upper, lower)
+        # extent=(lower-.5, upper+.5, upper+.5, lower-.5)
+        extent=(lower, upper, upper, lower)
     )
     xlim, ylim = ax.get_xlim(), ax.get_ylim()
     ax.set_xlim(xlim[0], xlim[1])
@@ -258,7 +260,7 @@ def process_img_channel_pair(
    
     num_cpus = dask.system.cpu_count()
     if num_workers > num_cpus:
-        num_workers =num_cpus
+        num_workers = num_cpus
 
     print()
     print(f"Processing {img_path.name} using {num_workers} cores")
