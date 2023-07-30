@@ -5,6 +5,7 @@ import pathlib
 import dask.array as da
 import numpy as np
 import ome_types
+import pint
 import tifffile
 import zarr
 from loguru import logger
@@ -107,7 +108,7 @@ class OmePyramidReader(DaPyramidChannelReader):
         self.path = pathlib.Path(path)
         pyramid = self.pyramid_from_ometiff(self.path)
         channel_axis = 0
-        self._pixel_size = 1 if pixel_size is None else pixel_size
+        self._pixel_size = pixel_size
         super().__init__(pyramid, channel_axis)
 
     @staticmethod
@@ -144,7 +145,16 @@ class OmePyramidReader(DaPyramidChannelReader):
             ome = ome_types.from_tiff(
                 self.path, validate=False, parser='lxml'
             )
-            return ome.images[0].pixels.physical_size_x
+            px_size = ome.images[0].pixels.physical_size_x
+            # convert length unit to µm
+            unit = ome.images[0].pixels.physical_size_x_unit.value
+            ureg = pint.UnitRegistry()
+            px_size_micron = px_size * ureg(unit).to(ureg.micron).magnitude
+            logger.info(
+                f"Detected pixel size: {px_size_micron:.4f} µm"
+            )
+            self._pixel_size = px_size_micron
+            return self._pixel_size
         except Exception:
             logger.warning(
                 f'Unable to parse pixel size from {self.path.name};'
