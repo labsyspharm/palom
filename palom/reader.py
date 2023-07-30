@@ -142,9 +142,13 @@ class OmePyramidReader(DaPyramidChannelReader):
         if self._pixel_size is not None:
             return self._pixel_size
         try:
-            ome = ome_types.from_tiff(
-                self.path, validate=False, parser='lxml'
-            )
+            # ome-types v0.4 does not have `parser` kwarg in `from_tiff`
+            import inspect
+            kwargs = dict(path=self.path, validate=False)
+            keys = inspect.signature(ome_types.from_tiff).parameters
+            if 'parser' in keys:
+                kwargs.update(dict(parser='lxml'))
+            ome = ome_types.from_tiff(**kwargs)
             px_size = ome.images[0].pixels.physical_size_x
             # convert length unit to µm
             unit = ome.images[0].pixels.physical_size_x_unit.value
