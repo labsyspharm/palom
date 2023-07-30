@@ -33,9 +33,10 @@ def validate_out_path(out_path, default, overwrite):
 def merge_channels(img_paths, out_path=None, overwrite=False, pyramid_config=None):
     readers = [palom.reader.OmePyramidReader(pp) for pp in img_paths]
     img_path = pathlib.Path(img_paths[0])
+    stem = img_path.name.replace(''.join(img_path.suffixes), '')
     out_path = validate_out_path(
         out_path,
-        img_path.parent / f"merged-{img_path.stem}-zlib.ome.tif",
+        img_path.parent / f"merged-{stem}-zlib.ome.tif",
         overwrite=overwrite
     )
     mosaics = [rr.pyramid[0] for rr in readers]
@@ -56,6 +57,43 @@ def merge_channels(img_paths, out_path=None, overwrite=False, pyramid_config=Non
         **{
             **dict(
                 pixel_size=pixel_size,
+                kwargs_tifffile=tif_tags,
+            ),
+            **PYRAMID_DEFAULTS,
+            **pyramid_config
+        }
+    )
+    return out_path
+
+
+def extract_channels(
+    img_path, channels, out_path=None, overwrite=False, pyramid_config=None
+):
+    img_path = pathlib.Path(img_path)
+    reader = palom.reader.OmePyramidReader(img_path)
+    stem = img_path.name.replace(''.join(img_path.suffixes), '')
+    out_path = validate_out_path(
+        out_path,
+        img_path.parent / f"extracted-{stem}-channel-{'_'.join([str(c) for c in channels])}.ome.tif",
+        overwrite=overwrite
+    )
+    mosaics = [reader.pyramid[0][channels]]
+    try:
+        tif_tags = src_tif_tags(img_path)
+    except Exception:
+        tif_tags = {}
+    if pyramid_config is None: pyramid_config = {}
+    text = f'''
+    Processing: {img_path}
+        extract channels: {channels}
+    '''
+    logger.info(text)
+    palom.pyramid.write_pyramid(
+        mosaics,
+        out_path,
+        **{
+            **dict(
+                pixel_size=reader.pixel_size,
                 kwargs_tifffile=tif_tags,
             ),
             **PYRAMID_DEFAULTS,
@@ -115,6 +153,7 @@ def main():
     import fire
     fire.Fire({
         'merge': merge_channels,
+        'extract': extract_channels,
         'compress': compress_pyramid,
         'compress-rarecyte': compress_rarecyte_ome_tiff,
     })
