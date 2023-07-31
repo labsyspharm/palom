@@ -14,6 +14,8 @@ def match_levels(r1, r2):
     ]
     return [
         (idx, np.where(np.array(px_sizes_2) < px1)[0].max())
+        if np.min(px_sizes_2) < px1
+        else (idx, 0)
         for idx, px1 in enumerate(px_sizes_1)
     ]
 
