@@ -103,7 +103,7 @@ def align_he(
         palom.pyramid.write_pyramid(
             mosaics=[mosaic],
             output_path=out_path,
-            pixel_size=px_size1*r1.level_downsamples[LEVEL],
+            pixel_size=r1.pixel_size*r1.level_downsamples[LEVEL],
             channel_names=[list('RBG')],
             compression='zlib',
             downscale_factor=2,
