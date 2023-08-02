@@ -62,6 +62,15 @@ def is_brightfield_img(img, max_size=100):
     return np.median(img[mask]) < np.median(img[~mask])
 
 
+def repeat_2d(arr, repeats):
+    assert arr.ndim == 2
+    assert len(repeats) == 2
+    r0, r1 = repeats
+    return np.repeat(
+        np.repeat(arr, r0, axis=0), r1, axis=1
+    )
+
+
 def block_labeled_mask(img_shape, block_shape, out_chunks=None):
     assert len(img_shape) == 2
     if len(block_shape) == 1:
