@@ -1,6 +1,7 @@
 import numpy as np
 
 from . import align
+from . import img_util
 
 
 def match_levels(r1, r2):
@@ -164,26 +165,19 @@ class MultiresAligner:
             np.all(al.original_shifts == al.shifts, axis=1)
             for al in aligners
         ]
-        def _repeat_2d(arr, repeats):
-            assert arr.ndim == 2
-            assert len(repeats) == 2
-            r0, r1 = repeats
-            return np.repeat(
-                np.repeat(arr, r0, axis=0), r1, axis=1
-            )
         h, w = aligners[0].grid_shape
         downsample_factors = [
             int(dd / self.downsample_factors[0])
             for dd in self.downsample_factors
         ]
         valid_masks = [
-            _repeat_2d(mm.reshape(aa.grid_shape), (dd, dd))[:h, :w]
+            img_util.repeat_2d(mm.reshape(aa.grid_shape), (dd, dd))[:h, :w]
             for dd, mm, aa in zip(
                 downsample_factors, _valid_masks, aligners
             ) 
         ]
         idxs = [
-            _repeat_2d(
+            img_util.repeat_2d(
                 np.arange(aa.shifts.shape[0]).reshape(aa.grid_shape), 
                 (dd, dd)
             )[:h, :w]
