@@ -22,7 +22,13 @@ def align_he(
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
     multi_res: bool = False,
+    multi_obj: bool = False,
+    multi_obj_kwarg: dict = None
 ):
+    assert not (multi_res and multi_obj), (
+    'setting both `multi_res` and `multi_obj` to `True` is not supported,'
+    ' choose at most one'
+    )
     out_dir, p1, p2 = pathlib.Path(out_dir), pathlib.Path(p1), pathlib.Path(p2)
     if out_name is None:
         out_name = f"{p2.stem}-registered.ome.tif"
@@ -54,9 +60,7 @@ def align_he(
 
     if not only_coarse:
         # the default
-        if not multi_res:  
-            aligner.moving_img = r2.read_level_channels(LEVEL, channel2)
-        
+        if not (multi_res or multi_obj):  
             aligner.compute_shifts()
         
             fig = aligner.plot_shifts()
@@ -93,6 +97,21 @@ def align_he(
 
             aligner = mr_aligner.base_aligner
             block_mx = mr_aligner.base_aligner.block_affine_matrices_da
+        elif multi_obj:
+            mo_aligner = palom.align_multi_obj.MultiObjAligner(
+                r1, r2,
+                level1=LEVEL,
+                channel1=channel1, channel2=channel2,
+                thumbnail_channel1=thumbnail_channel1,
+                thumbnail_channel2=thumbnail_channel2
+            )
+            mo_aligner._affine_matrix = aligner.affine_matrix
+            mo_aligner._coarse_affine_matrix = aligner.coarse_affine_matrix
+            if multi_obj_kwarg is None: multi_obj_kwarg = {}
+            mo_aligner.run(**multi_obj_kwarg)
+            save_all_figs(out_dir=out_dir / 'qc' / p2.stem, format='png', dpi=144, prefix=p2.name)
+            block_mx = mo_aligner.block_affine_matrices_da
+
    
     if not only_qc:
         mx = aligner.affine_matrix
@@ -156,8 +175,14 @@ def set_matplotlib_font(font_size=12):
     matplotlib.rcParams.update({'font.size': font_size})
 
 
-def save_all_figs(dpi=300, format='pdf', out_dir=None):
+def save_all_figs(dpi=300, format='pdf', out_dir=None, prefix=None):
     figs = [plt.figure(i) for i in plt.get_fignums()]
+    if prefix is not None:
+        for f in figs:
+            if f._suptitle:
+                f.suptitle(f"{prefix} {f._suptitle.get_text()}")
+            else:
+                f.suptitle(prefix)
     names = [f._suptitle.get_text() if f._suptitle else '' for f in figs]
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(exist_ok=True, parents=True)

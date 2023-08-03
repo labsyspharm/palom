@@ -30,15 +30,23 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs, is_mask=False)
     ])[return_slice]
 
 
-def block_shifts(ref_img, moving_img, pcc_kwargs=None):
+def _pc(img1, img2, mask, **pcc_kwargs):
+    if not np.all(mask):
+        return (np.inf, np.inf), np.inf
+    return register.phase_cross_correlation(img1, img2, **pcc_kwargs)
+
+
+def block_shifts(ref_img, moving_img, mask=True, pcc_kwargs=None):
+    default_pcc_kwargs = dict(sigma=0, upsample=1)
     if pcc_kwargs is None:
-        pcc_kwargs = dict(sigma=0, upsample=1)
+        pcc_kwargs = {}
     return da.map_blocks(
-        lambda a, b: np.atleast_2d(
-            register.phase_cross_correlation(a, b, **pcc_kwargs)[0]
+        lambda a, b, m: np.atleast_2d(
+            _pc(a, b, m, **{**default_pcc_kwargs, **pcc_kwargs})[0]
         ),
         ref_img,
         moving_img,
+        mask,
         dtype=np.float32
     )
 
@@ -191,11 +199,11 @@ class Aligner:
             ref_img, moving_img, mxs
         )
    
-    def compute_shifts(self, pcc_kwargs=None):
+    def compute_shifts(self, mask=True, pcc_kwargs=None):
         logger.info(f"Computing block-wise shifts")
         ref_img = self.ref_img
         moving_img = self.affine_transformed_moving_img(self.affine_matrix)
-        shifts_da = block_shifts(ref_img, moving_img, pcc_kwargs=pcc_kwargs)
+        shifts_da = block_shifts(ref_img, moving_img, mask, pcc_kwargs=pcc_kwargs)
         with tqdm.dask.TqdmCallback(
             ascii=True, desc='Computing shifts',
         ):
@@ -252,7 +260,12 @@ class Aligner:
             extent=(-0.5, w-0.5, h-0.5, -0.5)
         )
         # checkerboard pattern
-        ax.imshow(np.indices(shape).sum(axis=0) % 2, cmap='cool', alpha=0.2)
+        checkerboard = np.indices(shape).sum(axis=0) % 2
+        if hasattr(self, 'shifts'):
+            shifts = getattr(self, 'original_shifts', self.shifts)
+            checkerboard = checkerboard.astype(float)
+            checkerboard.flat[~np.all(np.isfinite(shifts), axis=1)] = np.nan
+        ax.imshow(checkerboard, cmap='cool', alpha=0.2)
         return grid
    
     def plot_shifts(self):

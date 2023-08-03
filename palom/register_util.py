@@ -8,7 +8,7 @@ import skimage.transform
 from . import img_util
 
 
-def make_img_pairs(img_left, img_right):
+def make_img_pairs(img_left, img_right, auto_mask=False):
     img_left = np.asarray(img_left)
     img_right = np.asarray(img_right)
     compare_funcs = [
@@ -23,7 +23,7 @@ def make_img_pairs(img_left, img_right):
         f(i, skimage.filters.threshold_triangle(i)).astype(np.uint8)
         for (i, f) in zip((img_left, img_right), compare_funcs)
     ]
-    img_left, img_right = match_bf_fl_histogram(img_left, img_right)
+    img_left, img_right = match_bf_fl_histogram(img_left, img_right, auto_mask)
     imgs_whiten = [
         img_util.whiten(i, 1)
         for i in (img_left, img_right)
@@ -36,7 +36,7 @@ def make_img_pairs(img_left, img_right):
     ]
 
 
-def match_bf_fl_histogram(img1, img2):
+def match_bf_fl_histogram(img1, img2, auto_mask=False):
     img1 = img1.astype(np.float32)
     img2 = img2.astype(np.float32)
     # TODO does it make a difference to min/max rescale before histogram
@@ -45,12 +45,50 @@ def match_bf_fl_histogram(img1, img2):
         img_util.is_brightfield_img(i)
         for i in (img1, img2)
     ]
+    match_func = skimage.exposure.match_histograms
+    if auto_mask:
+        match_func = match_histograms
     if is_bf_img1 == is_bf_img2:
-        return img1, skimage.exposure.match_histograms(img2, img1)
+        return img1, match_func(img2, img1)
     elif is_bf_img1:
-        return img1, skimage.exposure.match_histograms(-img2, img1)
+        return img1, match_func(-img2, img1)
     elif is_bf_img2:
-        return skimage.exposure.match_histograms(-img1, img2), img2
+        return match_func(-img1, img2), img2
+
+
+def match_histograms(img, ref_img):
+    if img_util.is_brightfield_img(img) != img_util.is_brightfield_img(ref_img):
+        print(
+            '`img` and `ref_img` may not be the same "type" (e.g. dark background)'
+        )
+
+    # downsize images to ~1000 px for speed
+    shape_max = max(*img.shape, *ref_img.shape)
+    downsize_factor = int(np.floor(shape_max / 500))
+    if downsize_factor < 1:
+        downsize_factor = 1
+    mask = img_util.entropy_mask(
+        img_util.cv2_downscale_local_mean(img, downsize_factor)
+    )
+    ref_mask = img_util.entropy_mask(
+        img_util.cv2_downscale_local_mean(ref_img, downsize_factor)
+    )
+    repeats = (downsize_factor, downsize_factor)
+    shape = img.shape
+    ref_shape = ref_img.shape
+    mask = img_util.repeat_2d(mask, repeats)[:shape[0], :shape[1]]
+    ref_mask = img_util.repeat_2d(ref_mask, repeats)[:ref_shape[0], :ref_shape[1]]
+    matched_img = np.zeros_like(img)
+    # NOTE this does not handle inverted matching, both image must be the same
+    # type. E.g. dark background, light signal
+    matched_img[mask] = skimage.exposure.histogram_matching._match_cumulative_cdf(
+        img[mask], ref_img[ref_mask]
+    )
+    matched_img[~mask] = ref_img[~ref_mask].mean()
+    # matched_img[~mask] = skimage.exposure.histogram_matching._match_cumulative_cdf(
+    #     img[~mask], ref_img[~ref_mask]
+    # )
+    return matched_img
 
 
 def plot_img_keypoints(imgs, keypoints):
