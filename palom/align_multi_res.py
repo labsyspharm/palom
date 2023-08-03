@@ -121,7 +121,7 @@ class MultiresAligner:
                 self.reader1, self.reader2, 
                 channel1=self.channel1, channel2=self.channel2,
                 level1=l1, level2=l2,
-                thumbnail_level1=self.thumbnail_channel1,
+                thumbnail_level1=self.thumbnail_level1,
                 # FIXME handle user selected thumbnail level
                 thumbnail_level2=None
             )
@@ -136,7 +136,7 @@ class MultiresAligner:
             channel1=self.thumbnail_channel1,
             channel2=self.thumbnail_channel2,
             level1=l1, level2=l2,
-                thumbnail_level1=self.thumbnail_channel1,
+                thumbnail_level1=self.thumbnail_level1,
                 # FIXME handle user selected thumbnail level
                 thumbnail_level2=None
         )

@@ -64,7 +64,7 @@ def align_he(
 
             aligner.constrain_shifts()
         else:
-            mr_aligner = palom.align_multires.MultiresAligner(
+            mr_aligner = palom.align_multi_res.MultiresAligner(
                 r1, r2,
                 level1=LEVEL,
                 channel1=channel1, channel2=channel2,

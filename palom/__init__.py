@@ -9,7 +9,7 @@ __version__ = importlib_metadata.version(__name__)
 from . import (
     reader,
     align,
-    align_multires,
+    align_multi_res,
     pyramid,
     color,
    
