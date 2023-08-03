@@ -268,7 +268,8 @@ def get_aligner(
     reader1, reader2,
     level1=0, level2=0,
     channel1=0, channel2=0,
-    thumbnail_level1=-1, thumbnail_level2=-1
+    thumbnail_level1=-1, thumbnail_level2=-1,
+    thumbnail_channel1=None, thumbnail_channel2=None
 ):
     if None in [thumbnail_level1, thumbnail_level2]:
         thumbnail_level1, thumbnail_level2 = match_thumbnail_level(
@@ -276,11 +277,13 @@ def get_aligner(
         )
     if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
     if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
+    thumbnail_channel1 = thumbnail_channel1 or channel1
+    thumbnail_channel2 = thumbnail_channel2 or channel2
     return Aligner(
         reader1.read_level_channels(level1, channel1), 
         reader2.read_level_channels(level2, channel2),
-        reader1.read_level_channels(thumbnail_level1, channel1),
-        reader2.read_level_channels(thumbnail_level2, channel2),
+        reader1.read_level_channels(thumbnail_level1, thumbnail_channel1),
+        reader2.read_level_channels(thumbnail_level2, thumbnail_channel2),
         reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1],
         reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2]
     )
