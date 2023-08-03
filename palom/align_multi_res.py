@@ -21,7 +21,7 @@ def match_levels(r1, r2):
     ]
 
 
-class MultiresAligner:
+class MultiResAligner:
 
     def __init__(
         self,
@@ -121,6 +121,8 @@ class MultiresAligner:
                 self.reader1, self.reader2, 
                 channel1=self.channel1, channel2=self.channel2,
                 level1=l1, level2=l2,
+                thumbnail_channel1=self.thumbnail_channel1,
+                thumbnail_channel2=self.thumbnail_channel2,
                 thumbnail_level1=self.thumbnail_level1,
                 # FIXME handle user selected thumbnail level
                 thumbnail_level2=None
@@ -133,12 +135,14 @@ class MultiresAligner:
         l1, l2 = self.level_pairs[0]
         aligner = align.get_aligner(
             self.reader1, self.reader2,
-            channel1=self.thumbnail_channel1,
-            channel2=self.thumbnail_channel2,
+            thumbnail_channel1=self.thumbnail_channel1,
+            thumbnail_channel2=self.thumbnail_channel2,
+            thumbnail_level1=self.thumbnail_level1,
+            # FIXME handle user selected thumbnail level
+            thumbnail_level2=None,
+            channel1=self.channel1,
+            channel2=self.channel2,
             level1=l1, level2=l2,
-                thumbnail_level1=self.thumbnail_level1,
-                # FIXME handle user selected thumbnail level
-                thumbnail_level2=None
         )
         default_kwargs = {
             'n_keypoints': 20_000,

@@ -21,7 +21,7 @@ def align_he(
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
-    multires: bool = False
+    multi_res: bool = False,
 ):
     out_dir, p1, p2 = pathlib.Path(out_dir), pathlib.Path(p1), pathlib.Path(p2)
     if out_name is None:
@@ -37,9 +37,11 @@ def align_he(
     LEVEL = 0
     aligner = palom.align.get_aligner(
         r1, r2,
+        level1=LEVEL, level2=LEVEL,
+        channel1=channel1, channel2=channel2,
+        # make thumbnail level pair based on pixel_size
         thumbnail_level1=None,
-        channel1=thumbnail_channel1, channel2=thumbnail_channel2,
-        level1=LEVEL, level2=LEVEL
+        thumbnail_channel1=thumbnail_channel1, thumbnail_level2=thumbnail_channel2
     )
 
     aligner.coarse_register_affine(n_keypoints=n_keypoints, detect_flip_rotate=True)
@@ -51,8 +53,8 @@ def align_he(
         _ = viz_coarse(r1, r2, LEVEL, LEVEL, channel1, channel2, aligner.affine_matrix)
 
     if not only_coarse:
-        if not multires:
-            aligner.ref_img = r1.read_level_channels(LEVEL, channel1)
+        # the default
+        if not multi_res:  
             aligner.moving_img = r2.read_level_channels(LEVEL, channel2)
         
             aligner.compute_shifts()
@@ -63,8 +65,9 @@ def align_he(
             save_all_figs(out_dir=out_dir / 'qc', format='png')
 
             aligner.constrain_shifts()
-        else:
-            mr_aligner = palom.align_multi_res.MultiresAligner(
+            block_mx = aligner.block_affine_matrices_da
+        elif multi_res:
+            mr_aligner = palom.align_multi_res.MultiResAligner(
                 r1, r2,
                 level1=LEVEL,
                 channel1=channel1, channel2=channel2,
@@ -77,7 +80,7 @@ def align_he(
             mr_aligner.constrain_shifts()
             
             fig = mr_aligner.plot_shifts()
-            fig.suptitle(f"{p2.name} (multires aligment)", fontsize=8)
+            fig.suptitle(f"{p2.name} (multi-res aligment)", fontsize=8)
             fig.axes[0].set_title(p1.name, fontsize=6)
             save_all_figs(out_dir=out_dir / 'qc', format='png', dpi=144)
 
@@ -89,11 +92,12 @@ def align_he(
                 pickle.dump(mr_aligner, f)
 
             aligner = mr_aligner.base_aligner
+            block_mx = mr_aligner.base_aligner.block_affine_matrices_da
    
     if not only_qc:
         mx = aligner.affine_matrix
         if not only_coarse:
-            mx = aligner.block_affine_matrices_da
+            mx = block_mx
         
         mosaic = palom.align.block_affine_transformed_moving_img(
             ref_img=aligner.ref_img,
