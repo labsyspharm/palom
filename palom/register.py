@@ -102,7 +102,10 @@ def feature_based_registration(
     img_left, img_right,
     detect_flip_rotate=False,
     n_keypoints=1000, plot_match_result=False,
-    plot_individual_result=False, ransacReprojThreshold=5
+    plot_individual_result=False, ransacReprojThreshold=5,
+    # apply entropy mask during histogram matching
+    # turn this off if the image is not a WSI
+    auto_mask=False
 ):
     flip_rotate_func, mx_fr = np.array, np.eye(3)
     if detect_flip_rotate:
@@ -113,12 +116,13 @@ def feature_based_registration(
         img_left, img_right,
         n_keypoints, plot_match_result,
         plot_individual_result, ransacReprojThreshold,
+        auto_mask=auto_mask
     )
     mx_affine = (np.vstack([mx_affine, [0, 0, 1]]) @ mx_fr)[:2, :]
     return mx_affine
 
 
-def match_test_flip_rotate(img_left, img_right):
+def match_test_flip_rotate(img_left, img_right, auto_mask=False):
 
     flip_funcs = [np.array] + [
         functools.partial(np.flip, axis=aa)
@@ -146,7 +150,7 @@ def match_test_flip_rotate(img_left, img_right):
 
     n_matches = [
         ensambled_match(
-            img_left, rr(ff(img_right)), return_match_mask=True
+            img_left, rr(ff(img_right)), return_match_mask=True, auto_mask=auto_mask
         )[1].sum()
         # only need half of the 4x4 combinations
         for ff, rr in itertools.product(flip_funcs[:2], rotate_funcs)
@@ -169,9 +173,12 @@ def ensambled_match(
     img_left, img_right,
     n_keypoints=1000, plot_match_result=False,
     plot_individual_result=False, ransacReprojThreshold=5,
-    return_match_mask=False
+    return_match_mask=False,
+    # apply entropy mask during histogram matching
+    # turn this off if the image is not a WSI
+    auto_mask=False
 ):
-    img_pairs = register_util.make_img_pairs(img_left, img_right)
+    img_pairs = register_util.make_img_pairs(img_left, img_right, auto_mask=auto_mask)
     img_left, img_right = img_pairs[2]
 
     all_found = [

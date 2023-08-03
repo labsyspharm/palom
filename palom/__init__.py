@@ -10,6 +10,7 @@ from . import (
     reader,
     align,
     align_multi_res,
+    align_multi_obj,
     pyramid,
     color,
    
