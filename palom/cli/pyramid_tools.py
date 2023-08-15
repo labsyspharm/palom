@@ -27,6 +27,7 @@ def validate_out_path(out_path, default, overwrite):
             f"Aborted. Destination file exists {out_path.name}."
             " Set `overwrite=True` to overwrite it."
         )
+        raise OSError('File exists')
     return out_path
 
 
