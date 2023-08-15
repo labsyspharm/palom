@@ -234,7 +234,7 @@ def tile_from_combined_mosaics(mosaics, tile_shape, save_RAM=False):
                     f" {cidx+1:2}/{m.shape[0]:2})"
                 ),
             ):
-                c = c.persist() if save_RAM else c.compute()
+                c = da_to_zarr(c) if save_RAM else c.compute()
             for y in range(0, num_rows, h):
                 for x in range(0, num_cols, w):
                     yield np.array(c[y:y+h, x:x+w])
@@ -268,7 +268,7 @@ def tile_from_pyramid(
                 cv2.blur,
                 ksize=(downscale_factor, downscale_factor), anchor=(0, 0)
             )
-        img = img.persist() if save_RAM else img.compute()
+        img = da_to_zarr(img) if save_RAM else img.compute()
         num_rows, num_columns = img.shape
         h, w = tile_shape
         h *= downscale_factor
@@ -285,3 +285,21 @@ def tile_from_pyramid(
                 yield np.array(img[y:y+h:downscale_factor, x:x+w:downscale_factor])
         # setting img to None seems necessary to prevent RAM spike
         img = None
+
+
+def da_to_zarr(da_img, zarr_store=None, num_workers=None, out_shape=None, chunks=None):
+    if zarr_store is None:
+        if out_shape is None:
+            out_shape = da_img.shape
+        if chunks is None:
+            chunks = da_img.chunksize
+        zarr_store = zarr.create(
+            out_shape,
+            chunks=chunks,
+            dtype=da_img.dtype,
+            overwrite=True
+        )
+    da_img.to_zarr(zarr_store, compute=False).compute(
+        num_workers=num_workers
+    )
+    return zarr_store
