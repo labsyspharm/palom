@@ -63,10 +63,11 @@ def block_affine(
     )
 
     x1_src, y1_src = np.ceil(
-        np.clip(inversed_corners.max(axis=0), 0, None)
+        # Add one additional pixel to handle border/edge effect
+        np.clip(inversed_corners.max(axis=0) + 1, 0, None)
     ).astype(int)
     x0_src, y0_src = np.floor(
-        np.clip(inversed_corners.min(axis=0), 0, None)
+        np.clip(inversed_corners.min(axis=0) - 1, 0, None)
     ).astype(int)
    
     if multichannel:
@@ -85,7 +86,11 @@ def block_affine(
         rotation=transformation.rotation,
         shear=transformation.shear
     )
-    order = cv2.INTER_NEAREST if is_mask else cv2.INTER_AREA
+
+    # INTER_AREA is not supported
+    # https://github.com/opencv/opencv/blob/1ebea1e0f0a4b95515f3e701c5e4243b31f82705/modules/imgproc/src/imgwarp.cpp#L2726-L2756
+    # https://medium.com/@wenrudong/what-is-opencvs-inter-area-actually-doing-282a626a09b3
+    order = cv2.INTER_NEAREST if is_mask else cv2.INTER_LINEAR
     try:
         warped_src_img_block = cv2.warpAffine(
             src_img_block, block_tform.params[:2, :],
