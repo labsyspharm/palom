@@ -17,7 +17,7 @@ PYRAMID_DEFAULTS = dict(
 def validate_out_path(out_path, default, overwrite):
     if out_path is None:
         out_path = default
-    out_path = pathlib.Path(out_path)
+    out_path = pathlib.Path(out_path).absolute()
     if ''.join(out_path.suffixes[-2:]).lower() not in ('.ome.tif', '.ome.tiff'):
         logger.error(
             'out_path must ends with .ome.tif or .ome.tiff'
