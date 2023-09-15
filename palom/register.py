@@ -10,6 +10,7 @@ import numpy as np
 import scipy.fft
 import skimage.feature
 import skimage.registration
+import skimage.exposure
 
 from . import img_util, register_util
 
@@ -229,14 +230,21 @@ def ensambled_match(
         maxIters=5000
     )
     if plot_match_result == True:
-        plt.figure()
-        plt.gray()
+        _, ax = plt.subplots()
         skimage.feature.plot_matches(
-            plt.gca(), img_left, img_right,
+            ax,
+            np.log(skimage.exposure.rescale_intensity(img_left, out_range=(1, 4095))),
+            np.log(skimage.exposure.rescale_intensity(img_right, out_range=(1, 4095))),
             np.fliplr(all_src), np.fliplr(all_dst),
             np.arange(len(all_src)).repeat(2).reshape(-1, 2)[mask.flatten()>0],
+            keypoints_color=np.divide([255, 215, 0, 50], 255),
+            matches_color='deepskyblue',
             only_matches=False
         )
+        for line in ax.get_lines():
+            line.set_alpha(0.5)
+            line.set_linewidth(.5)
+
     return (t_matrix, mask) if return_match_mask else t_matrix
 
 

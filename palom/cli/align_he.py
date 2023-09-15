@@ -57,6 +57,15 @@ def align_he(
         test_intensity_invert=True,
         auto_mask=auto_mask
     )
+    fig, ax = plt.gcf(), plt.gca()
+    fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
+    ax.set_title(f"{p1.name} - {p2.name}", fontsize=6)
+    im_h, im_w = ax.images[0].get_array().shape
+    set_subplot_size(im_w/288, im_h/288, ax=ax)
+    ax.set_anchor('N')
+    # use 0.5 inch on the top for figure title
+    fig.subplots_adjust(top=1 - .5 / fig.get_size_inches()[1])
+    save_all_figs(out_dir=out_dir / 'qc', format='jpg', dpi=144)
    
     if viz_coarse_napari:
         _ = viz_coarse(r1, r2, LEVEL, LEVEL, channel1, channel2, aligner.affine_matrix)
@@ -193,6 +202,18 @@ def save_all_figs(dpi=300, format='pdf', out_dir=None, prefix=None):
     for f, n, nm in zip(figs, plt.get_fignums(), names):
         f.savefig(out_dir / f"{n}-{nm}.{format}", dpi=dpi, bbox_inches='tight')
         plt.close(f)
+
+
+def set_subplot_size(w, h, ax=None):
+    """ w, h: width, height in inches """
+    if not ax: ax=plt.gca()
+    l = ax.figure.subplotpars.left
+    r = ax.figure.subplotpars.right
+    t = ax.figure.subplotpars.top
+    b = ax.figure.subplotpars.bottom
+    figw = float(w)/(r-l)
+    figh = float(h)/(t-b)
+    ax.figure.set_size_inches(figw, figh)
 
 
 if __name__ == '__main__':
