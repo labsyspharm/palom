@@ -8,30 +8,42 @@ import skimage.transform
 from . import img_util
 
 
-def make_img_pairs(img_left, img_right, auto_mask=False):
-    img_left = np.asarray(img_left)
-    img_right = np.asarray(img_right)
+IS_BF_IMG = img_util.is_brightfield_img
+
+
+def make_img_pairs(img1, img2, auto_invert_intensity=True, auto_mask=False):
+    img1 = np.asarray(img1).astype(np.float32)
+    img2 = np.asarray(img2).astype(np.float32)
     compare_funcs = [
-        np.less if img_util.is_brightfield_img(i) else np.greater
-        for i in (img_left, img_right)
+        np.less if IS_BF_IMG(i) else np.greater
+        for i in (img1, img2)
     ]
+    if not auto_invert_intensity:
+        compare_funcs = [compare_funcs[0]]*2
     imgs_otsu = [
         f(i, skimage.filters.threshold_otsu(i)).astype(np.uint8)
-        for (i, f) in zip((img_left, img_right), compare_funcs)
+        for (i, f) in zip((img1, img2), compare_funcs)
     ]
     imgs_tri = [
         f(i, skimage.filters.threshold_triangle(i)).astype(np.uint8)
-        for (i, f) in zip((img_left, img_right), compare_funcs)
+        for (i, f) in zip((img1, img2), compare_funcs)
     ]
-    img_left, img_right = match_bf_fl_histogram(img_left, img_right, auto_mask)
+    if auto_invert_intensity:
+        img1, img2 = match_bf_fl_histogram(img1, img2, auto_mask)
+    else:
+        match_func = skimage.exposure.match_histograms
+        if auto_mask:
+            match_func = masked_match_histograms
+        img2 = match_func(img2, img1)
+
     imgs_whiten = [
         img_util.whiten(i, 1)
-        for i in (img_left, img_right)
+        for i in (img1, img2)
     ]
     return [
         imgs_otsu,
         imgs_tri,
-        (img_left, img_right),
+        (img1, img2),
         imgs_whiten
     ]
 
@@ -42,12 +54,12 @@ def match_bf_fl_histogram(img1, img2, auto_mask=False):
     # TODO does it make a difference to min/max rescale before histogram
     # matching?
     is_bf_img1, is_bf_img2 = [
-        img_util.is_brightfield_img(i)
+        IS_BF_IMG(i)
         for i in (img1, img2)
     ]
     match_func = skimage.exposure.match_histograms
     if auto_mask:
-        match_func = match_histograms
+        match_func = masked_match_histograms
     if is_bf_img1 == is_bf_img2:
         return img1, match_func(img2, img1)
     elif is_bf_img1:
@@ -56,11 +68,12 @@ def match_bf_fl_histogram(img1, img2, auto_mask=False):
         return match_func(-img1, img2), img2
 
 
-def match_histograms(img, ref_img):
-    if img_util.is_brightfield_img(img) != img_util.is_brightfield_img(ref_img):
-        print(
-            '`img` and `ref_img` may not be the same "type" (e.g. dark background)'
-        )
+def masked_match_histograms(img, ref_img):
+    if IS_BF_IMG(img) != IS_BF_IMG(ref_img):
+        bg = ['dark', 'light']
+        print('`img` and `ref_img` detected as different types:')
+        print(f"    `img` detected as {bg[IS_BF_IMG(img)]}-background image")
+        print(f"    `ref_img` detected as {bg[IS_BF_IMG(ref_img)]}-background image")
 
     # downsize images to ~1000 px for speed
     shape_max = max(*img.shape, *ref_img.shape)

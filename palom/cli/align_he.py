@@ -18,6 +18,7 @@ def align_he(
     px_size1: float = None,
     px_size2: float = None,
     n_keypoints: int = 10_000,
+    auto_mask=True,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -50,10 +51,12 @@ def align_he(
         thumbnail_channel1=thumbnail_channel1, thumbnail_level2=thumbnail_channel2
     )
 
-    aligner.coarse_register_affine(n_keypoints=n_keypoints, detect_flip_rotate=True)
-    plt.gcf().suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
-    plt.gca().set_title(f"{p1.name} - {p2.name}", fontsize=6)
-    save_all_figs(out_dir=out_dir / 'qc', format='png')
+    aligner.coarse_register_affine(
+        n_keypoints=n_keypoints,
+        test_flip=True,
+        test_intensity_invert=True,
+        auto_mask=auto_mask
+    )
    
     if viz_coarse_napari:
         _ = viz_coarse(r1, r2, LEVEL, LEVEL, channel1, channel2, aligner.affine_matrix)

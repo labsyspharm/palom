@@ -147,7 +147,8 @@ class MultiResAligner:
         default_kwargs = {
             'n_keypoints': 20_000,
             'plot_match_result': True,
-            'detect_flip_rotate': True
+            'test_flip': True,
+            'test_intensity_flip': True,
         }
         aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
         self._coarse_affine_matrix = aligner.coarse_affine_matrix

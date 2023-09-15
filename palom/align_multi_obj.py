@@ -107,7 +107,8 @@ class MultiObjAligner:
         default_kwargs = {
             'n_keypoints': 20_000,
             'plot_match_result': True,
-            'detect_flip_rotate': True,
+            'test_flip': True,
+            'test_intensity_flip': True,
             'auto_mask': True
         }
         c21l.coarse_register_affine(**{**default_kwargs, **kwargs})
@@ -200,7 +201,8 @@ class MultiObjAligner:
         default_kwargs = {
             'n_keypoints': 10_000,
             'plot_match_result': True,
-            'detect_flip_rotate': True,
+            'test_flip': True,
+            'test_intensity_flip': True,
             'auto_mask': True
         }
         c21l.coarse_register_affine(
