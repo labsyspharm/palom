@@ -30,6 +30,8 @@ def whiten(img, sigma=1):
 
 
 def cv2_to_uint8(img):
+    if np.issubdtype(img.dtype, bool):
+        img = img.astype(np.int8)
     return cv2.normalize(
         src=img, dst=None,
         alpha=255, beta=0,
