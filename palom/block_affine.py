@@ -87,6 +87,8 @@ def block_affine(
         shear=transformation.shear
     )
 
+    src_img_block = np.asarray(src_img_block)
+
     # INTER_AREA is not supported
     # https://github.com/opencv/opencv/blob/1ebea1e0f0a4b95515f3e701c5e4243b31f82705/modules/imgproc/src/imgwarp.cpp#L2726-L2756
     # https://medium.com/@wenrudong/what-is-opencvs-inter-area-actually-doing-282a626a09b3
