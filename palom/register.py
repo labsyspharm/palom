@@ -1,16 +1,16 @@
 import functools
 import inspect
 import itertools
-import logging
 import warnings
 
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.fft
+import skimage.exposure
 import skimage.feature
 import skimage.registration
-import skimage.exposure
+from loguru import logger
 
 from . import img_util, register_util
 
@@ -268,7 +268,7 @@ def cv2_feature_detect_and_match(
         register_util.plot_img_keypoints(
             [img_left, img_right], [keypoints_left, keypoints_right]
         )
-    logging.info(f"keypts L:{len(keypoints_left)}, keypts R:{len(keypoints_right)}")
+    logger.debug(f"keypts L:{len(keypoints_left)}, keypts R:{len(keypoints_right)}")
     if len(keypoints_left) == 0 or len(keypoints_right) == 0:
         return np.empty((1, 2)), np.empty((1, 2))
 
