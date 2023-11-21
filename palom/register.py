@@ -149,6 +149,9 @@ def feature_based_registration(
         auto_invert_intensity=auto_invert_intensity,
         auto_mask=auto_mask,
     )
+    if mx_affine is None: 
+        logger.warning('Feature matching failed. Returning identity matrix as placeholder') 
+        mx_affine = np.eye(3)[:2] 
     mx_affine = (np.vstack([mx_affine, [0, 0, 1]]) @ mx_fr)[:2, :]
     return mx_affine
 
