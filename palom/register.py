@@ -256,7 +256,7 @@ def cv2_feature_detect_and_match(
         img_util.cv2_to_uint8(i)
         for i in (img_left, img_right)
     ]
-    descriptor_extractor = cv2.ORB_create(n_keypoints)
+    descriptor_extractor = cv2.ORB_create(n_keypoints, edgeThreshold=0)
 
     keypoints_left, descriptors_left = descriptor_extractor.detectAndCompute(
         np.dstack(3*(img_left,)), None
