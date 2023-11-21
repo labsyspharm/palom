@@ -13,10 +13,11 @@ from . import (
     align_multi_obj,
     pyramid,
     color,
-   
+    
     # debugging
     block_affine,
     extract,
     img_util,
-    register
+    register,
+    register_util,
 )
