@@ -48,7 +48,7 @@ def align_he(
         channel1=channel1, channel2=channel2,
         # make thumbnail level pair based on pixel_size
         thumbnail_level1=None,
-        thumbnail_channel1=thumbnail_channel1, thumbnail_level2=thumbnail_channel2
+        thumbnail_channel1=thumbnail_channel1, thumbnail_channel2=thumbnail_channel2
     )
 
     aligner.coarse_register_affine(
