@@ -173,7 +173,7 @@ def viz_coarse(r1, r2, level1, level2, channel1, channel2, mx):
 
 def get_reader(path):
     path = pathlib.Path(path)
-    if path.suffix == '.svs':
+    if path.suffix in ['.svs', '.ndpi']:
         return palom.reader.SvsReader
     else:
         return palom.reader.OmePyramidReader
