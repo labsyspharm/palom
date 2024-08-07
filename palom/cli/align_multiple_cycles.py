@@ -1,35 +1,107 @@
 import pathlib
-
+import argparse
 import matplotlib
 import matplotlib.pyplot as plt
-
 import palom
+import sys
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            'Align multiple cycles of images using PALOM'
+        )   
+    )
+    parser.add_argument(
+        '--img_list',
+        dest='img_list',
+        nargs='+',
+        help='list of image paths to be aligned'
+    )
+    parser.add_argument(
+        '--out_dir',
+        dest='out_dir',
+        help='output directory'
+    )
+    parser.add_argument(
+        '--out_name',
+        dest='out_name',
+        help='output file name'
+    )
+    #parser.add_argument(
+    #    '--thumbnail_channel',
+    #    metavar='thumbnail_channel',
+    #    type=int,
+    #    default=1,
+    #    help='channel to use for thumbnail images'
+    #)
+    parser.add_argument(
+        '--channel',
+        dest='channel',
+        type=int,
+        default=0,
+        help='channel to use for alignment'
+    )
+    parser.add_argument(
+        '--px_size',
+        dest='px_size',
+        type=float,
+        help='pixel size'
+    )
+    parser.add_argument(
+        '--n_keypoints',
+        dest='n_keypoints',
+        type=int,
+        default=10000,
+        help='number of keypoints'
+    )
+    parser.add_argument(
+        '--auto_mask',
+        dest='auto_mask',
+        type=bool,
+        default=True,
+        help='auto mask'
+    )
+    parser.add_argument(
+        '--only_coarse',
+        dest='only_coarse',
+        action='store_true',
+        help='only coarse alignment'
+    )
+    parser.add_argument(
+        '--only_qc',
+        dest='only_qc',
+        type=bool,
+        default=False,
+        help='only quality control'
+    )
+    arg = parser.parse_args()
 
-def align_multiple_cycles(
-    # let im_list be a list of image paths that the user can input as --im_list 'path1' 'path2' 'path3' ...
-    img_list: list[str | pathlib.Path],
-    out_dir: str | pathlib.Path,
-    out_name: str = None,
-    thumbnail_channel: int = 1,
-    channel: int = 0,
-    px_size: float = None,
-    n_keypoints: int = 10000,
-    auto_mask=True,
-    only_coarse: bool = False,
-    only_qc: bool = False
-):
-    out_dir = pathlib.Path(out_dir)
-    img_list = [pathlib.Path(img_path) for img_path in img_list]
+    return arg
 
-    if out_name is None:
+def align_multiple_cycles(args):
+    #thumbnail_channel: int = 1,
+
+    only_coarse = args.only_coarse
+    only_qc = args.only_qc
+    auto_mask = args.auto_mask
+    n_keypoints = args.n_keypoints
+    px_size = args.px_size
+
+    out_dir = pathlib.Path(args.out_dir)
+    img_list = [pathlib.Path(img_path) for img_path in args.img_list]
+
+    if args.out_name is None:
         out_name = f"{img_list[1].stem}-registered.ome.tif"
+    else:
+        out_name = args.out_name
+    channel = args.channel
+
     out_path = out_dir / out_name
     assert ''.join(out_path.suffixes[-2:]) in ('.ome.tif', '.ome.tiff')
     out_path.parent.mkdir(exist_ok=True, parents=True)
     set_matplotlib_font(font_size=8)
 
-    ref_reader = palom.reader.OmePyramidReader(img_list[0])
+    ref_reader = palom.reader.OmePyramidReader(img_list[0], pixel_size=px_size)
     moving_readers = [palom.reader.OmePyramidReader(file) for file in img_list[1:]]
 
     LEVEL = 0
@@ -143,28 +215,10 @@ def set_subplot_size(w, h, ax=None):
     figh = float(h)/(t-b)
     ax.figure.set_size_inches(figw, figh)
 
+def main():
+    align_multiple_cycles(parse_args())
 
 if __name__ == '__main__':
-    import fire
-    import sys
+    sys.exit(main())
 
-    fire.Fire(align_multiple_cycles)
-
-   
-    '''
-    Example 1: inspect coarse alignment using napari
-    python align_he.py \
-        Z:\RareCyte-S3\P54_CRCstudy_Bridge\P54_S33_Full_Or6_A31_C90c_HMS@20221025_001610_632297.ome.tiff \
-        "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\22199$P54_33_HE$US$SCAN$OR$001 _104050.svs" \
-        "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\test" \
-        --px_size1 0.325 --only_qc --only_coarse --viz_coarse_napari
-
-    Example 2: process pair and output registered image
-    python align_multiple_cycles.py \
-        Z:\RareCyte-S3\P54_CRCstudy_Bridge\P54_S33_Full_Or6_A31_C90c_HMS@20221025_001610_632297.ome.tiff \
-        "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\22199$P54_33_HE$US$SCAN$OR$001 _104050.svs" \
-        "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\test" \
-        --px_size1 0.325
-   
-    '''
     
