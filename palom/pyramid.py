@@ -1,3 +1,4 @@
+import itertools
 import math
 
 import cv2
@@ -49,33 +50,43 @@ def format_channel_names(num_channels_each_mosaic, channel_names):
         'Mosaic 4_1',
         'Mosaic 4_2',
         'Mosaic 4_3',
-        'Mosaic 4_4'
+        'Mosaic 4_4',
+        'Mosaic 5_1',
+        'Mosaic 5_2',
+        'Mosaic 5_3',
+        'Mosaic 5_4',
+        'Mosaic 5_5'
     ]
     """
     matched_channel_names = []
-    for idx, (n, c) in enumerate(zip(channel_names, num_channels_each_mosaic)):
+    for idx, (n, c) in enumerate(
+        itertools.zip_longest(channel_names, num_channels_each_mosaic)
+    ):
+        if c is None:
+            c = 0
         nl = n
-        if type(n) == str:
+        if n is None:
+            nl = []
+        if isinstance(n, str):
             nl = [n] * c
         if len(nl) == 1:
             nl = nl * c
         if len(nl) != c:
             nl = [f"Mosaic {idx+1}"] * c
-        matched_channel_names.append(nl)
-    return make_unique_str([n for l in matched_channel_names for n in l])
+        matched_channel_names.extend(nl)
+    return make_unique_str(matched_channel_names)
 
 
 def make_unique_str(str_list):
     if len(set(str_list)) == len(str_list):
         return str_list
-    else:
-        max_length = max([len(s) for s in str_list])
-        str_np = np.array(str_list, dtype=np.dtype(("U", max_length + 10)))
-        unique, counts = np.unique(str_np, return_counts=True)
-        has_duplicate = unique[counts > 1]
-        for n in has_duplicate:
-            suffixes = [f"_{i}" for i in range(1, (str_np == n).sum() + 1)]
-            str_np[str_np == n] = np.char.add(n, suffixes)
+    max_length = max([len(s) for s in str_list])
+    str_np = np.array(str_list, dtype=np.dtype(("U", max_length + 10)))
+    unique, counts = np.unique(str_np, return_counts=True)
+    has_duplicate = unique[counts > 1]
+    for n in has_duplicate:
+        suffixes = [f"_{i}" for i in range(1, (str_np == n).sum() + 1)]
+        str_np[str_np == n] = np.char.add(n, suffixes)
     return make_unique_str(list(str_np))
 
 
