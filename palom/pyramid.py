@@ -1,3 +1,4 @@
+import gc
 import itertools
 import math
 
@@ -239,10 +240,13 @@ def tile_from_pyramid(
 ):
     # workaround progress bar
     # https://forum.image.sc/t/tifffile-ome-tiff-generation-is-taking-too-much-ram/41865/26
-    pbar = tqdm.tqdm(total=num_channels, ascii=True, desc=f"Processing channel")
+    pbar = tqdm.tqdm(total=num_channels, ascii=True, desc="Processing channel")
     for c in range(num_channels):
+        gc.collect()
         img = da.from_zarr(
-            zarr.open(tifffile.imread(path, series=0, level=level, aszarr=True))
+            zarr.open(
+                tifffile.imread(path, series=0, level=level, aszarr=True), mode="r"
+            )
         )
         if img.ndim == 2:
             img = img.reshape(1, *img.shape)
