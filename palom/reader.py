@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import pathlib
 
 import dask.array as da
@@ -68,10 +69,10 @@ class DaPyramidChannelReader:
 
     @property
     def level_downsamples(self) -> dict[int, int]:
-        return {
-            i: round(self.pyramid[0].shape[1] / level.shape[1])
-            for i, level in enumerate(self.pyramid)
-        }
+        heights = [ss.shape[1] for ss in self.pyramid]
+        heights.insert(0, heights[0])
+        downsamples = [round(h1 / h2) for h1, h2 in itertools.pairwise(heights)]
+        return dict(enumerate(itertools.accumulate(downsamples, func=np.multiply)))
 
     @property
     def pixel_dtype(self) -> np.dtype:
