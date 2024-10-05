@@ -202,3 +202,51 @@ class SvsReader(DaPyramidChannelReader):
             )
             self._pixel_size = 1
             return self._pixel_size
+
+
+class VsiReader(DaPyramidChannelReader):
+    def __init__(
+        self, path: str | pathlib.Path, scene: int = 0, pixel_size: float | None = None
+    ) -> None:
+        from . import slideio_store
+
+        self.path = pathlib.Path(path)
+        self.scene = scene
+        self.store = slideio_store.SlideIoVsiStore(str(self.path), scene=self.scene)
+        self.zarr = zarr.open(self.store, mode="r")
+        self._pixel_size = pixel_size
+        pyramid = self.pyramid_from_vsi()
+        channel_axis = 2
+        super().__init__(pyramid, channel_axis)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["pyramid"], state["store"], state["zarr"]
+        state["path"] = state["path"].resolve()
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__init__(
+            path=state["path"], scene=state["scene"], pixel_size=state["_pixel_size"]
+        )
+
+    def pyramid_from_vsi(self) -> list[da.Array]:
+        return [
+            da.from_zarr(self.store, component=d["path"])[..., :3]
+            for d in self.zarr.attrs["multiscales"][0]["datasets"]
+        ]
+
+    @property
+    def pixel_size(self):
+        from . import slideio_store
+
+        if self._pixel_size is not None:
+            return self._pixel_size
+        self._pixel_size = slideio_store._parse_pixel_size(self.store._slide)
+        if self._pixel_size == 1.0:
+            logger.warning(
+                f"Unable to parse pixel size from {self.path.name};"
+                f" assuming 1 µm. Use `_pixel_size` to set it manually"
+            )
+        return self._pixel_size
