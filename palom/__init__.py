@@ -20,4 +20,5 @@ from . import (
     img_util,
     register,
     register_util,
+    register_dev,
 )

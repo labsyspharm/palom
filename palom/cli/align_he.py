@@ -2,6 +2,7 @@ import pathlib
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 
 import palom
 
@@ -55,12 +56,14 @@ def align_he(
         thumbnail_channel2=thumbnail_channel2,
     )
 
-    aligner.coarse_register_affine(
+    _mx = palom.register_dev.search_then_register(
+        aligner.ref_thumbnail,
+        aligner.moving_thumbnail,
         n_keypoints=n_keypoints,
-        test_flip=True,
-        test_intensity_invert=True,
         auto_mask=auto_mask,
     )
+    aligner.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
+
     fig, ax = plt.gcf(), plt.gca()
     fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     ax.set_title(f"{p1.name} - {p2.name}", fontsize=6)
