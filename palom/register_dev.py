@@ -74,7 +74,7 @@ def search_best_match_config(
 
     matches = np.array([rr[0] for rr in results])
     best = matches.max()
-    fold_increase = best / np.mean(matches[matches < best])
+    fold_increase = best / np.mean(np.mean(np.sort(matches)[:-2]))
     idx = np.argmax(matches)
     if fold_increase > min_fold_increase:
         return results[idx]
