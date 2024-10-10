@@ -1,8 +1,11 @@
 import pathlib
+import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import skimage.exposure
+from loguru import logger
 
 import palom
 
@@ -13,7 +16,7 @@ def align_he(
     out_dir: str | pathlib.Path,
     out_name: str = None,
     thumbnail_channel1: int = 1,
-    thumbnail_channel2: int = 2,
+    thumbnail_channel2: int = 1,
     channel1: int = 0,
     channel2: int = 2,
     px_size1: float = None,
@@ -23,9 +26,10 @@ def align_he(
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
-    multi_res: bool = False,
+    multi_res: bool = True,
     multi_obj: bool = False,
     multi_obj_kwarg: dict = None,
+    intensity_in_range: tuple[int, int] = None,
 ):
     assert not (multi_res and multi_obj), (
         "setting both `multi_res` and `multi_obj` to `True` is not supported,"
@@ -34,20 +38,31 @@ def align_he(
     out_dir, p1, p2 = pathlib.Path(out_dir), pathlib.Path(p1), pathlib.Path(p2)
     if out_name is None:
         out_name = f"{p2.stem}-registered.ome.tif"
+    log_path = out_dir / "log" / f"{out_name}.log"
+    log_path.parent.mkdir(exist_ok=True, parents=True)
+    logger.remove()
+    logger.add(sys.stderr)
+    logger.add(log_path, rotation="5 MB")
+    logger.info(f"Start processing {p2.name}")
     out_path = out_dir / out_name
     assert "".join(out_path.suffixes[-2:]) in (".ome.tif", ".ome.tiff")
     out_path.parent.mkdir(exist_ok=True, parents=True)
+    if intensity_in_range is not None:
+        assert sorted(intensity_in_range) == list(intensity_in_range)
+        assert len(intensity_in_range) == 2
+
     set_matplotlib_font(font_size=8)
 
     r1 = get_reader(p1)(p1, pixel_size=px_size1)
     r2 = get_reader(p2)(p2, pixel_size=px_size2)
 
-    LEVEL = 0
+    LEVEL1 = 0
+    LEVEL2 = 0
     aligner = palom.align.get_aligner(
         r1,
         r2,
-        level1=LEVEL,
-        level2=LEVEL,
+        level1=LEVEL1,
+        level2=LEVEL2,
         channel1=channel1,
         channel2=channel2,
         # make thumbnail level pair based on pixel_size
@@ -55,15 +70,13 @@ def align_he(
         thumbnail_channel1=thumbnail_channel1,
         thumbnail_channel2=thumbnail_channel2,
     )
-
     _mx = palom.register_dev.search_then_register(
-        aligner.ref_thumbnail,
-        aligner.moving_thumbnail,
+        np.asarray(aligner.ref_thumbnail),
+        np.asarray(aligner.moving_thumbnail),
         n_keypoints=n_keypoints,
         auto_mask=auto_mask,
     )
     aligner.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
-
     fig, ax = plt.gcf(), plt.gca()
     fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     ax.set_title(f"{p1.name} - {p2.name}", fontsize=6)
@@ -75,7 +88,9 @@ def align_he(
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
 
     if viz_coarse_napari:
-        _ = viz_coarse(r1, r2, LEVEL, LEVEL, channel1, channel2, aligner.affine_matrix)
+        _ = viz_coarse(
+            r1, r2, LEVEL1, LEVEL2, channel1, channel2, aligner.affine_matrix
+        )
 
     if not only_coarse:
         # the default
@@ -93,7 +108,7 @@ def align_he(
             mr_aligner = palom.align_multi_res.MultiResAligner(
                 r1,
                 r2,
-                level1=LEVEL,
+                level1=LEVEL1,
                 channel1=channel1,
                 channel2=channel2,
                 thumbnail_channel1=thumbnail_channel1,
@@ -111,7 +126,7 @@ def align_he(
 
             pickle_dir = out_dir / "pickle"
             if not pickle_dir.exists():
-                pickle_dir.mkdir(parents=True)
+                pickle_dir.mkdir(exist_ok=True, parents=True)
             import pickle
 
             with open(pickle_dir / f"{p2.name}-palom.pkl", "wb") as f:
@@ -123,7 +138,7 @@ def align_he(
             mo_aligner = palom.align_multi_obj.MultiObjAligner(
                 r1,
                 r2,
-                level1=LEVEL,
+                level1=LEVEL1,
                 channel1=channel1,
                 channel2=channel2,
                 thumbnail_channel1=thumbnail_channel1,
@@ -145,12 +160,23 @@ def align_he(
             mx = block_mx
 
         mosaic = palom.align.block_affine_transformed_moving_img(
-            ref_img=aligner.ref_img, moving_img=r2.pyramid[LEVEL], mxs=mx
+            ref_img=aligner.ref_img, moving_img=r2.pyramid[LEVEL2], mxs=mx
         )
+
+        if (mosaic.shape[0] == 3) & (intensity_in_range is not None):
+            out_dtype = mosaic.dtype
+            mosaic = mosaic.map_blocks(
+                lambda x: skimage.exposure.rescale_intensity(
+                    x, in_range=intensity_in_range, out_range=out_dtype
+                )
+                .round()
+                .astype(out_dtype),
+                dtype=out_dtype,
+            )
         palom.pyramid.write_pyramid(
             mosaics=[mosaic],
             output_path=out_path,
-            pixel_size=r1.pixel_size * r1.level_downsamples[LEVEL],
+            pixel_size=r1.pixel_size * r1.level_downsamples[LEVEL1],
             channel_names=[list("RBG")],
             compression="zlib",
             downscale_factor=2,
@@ -190,6 +216,8 @@ def get_reader(path):
     path = pathlib.Path(path)
     if path.suffix in [".svs", ".ndpi"]:
         return palom.reader.SvsReader
+    elif path.suffix == ".vsi":
+        return palom.reader.VsiReader
     else:
         return palom.reader.OmePyramidReader
 
@@ -232,11 +260,44 @@ def set_subplot_size(w, h, ax=None):
     ax.figure.set_size_inches(figw, figh)
 
 
+def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
+    import csv
+    import inspect
+    import pprint
+    import types
+
+    if print_args:
+        _args = [str(vv) for vv in inspect.signature(align_he).parameters.values()]
+        print(f"\nFunction args\n{pprint.pformat(_args, indent=4)}\n")
+    _arg_types = inspect.get_annotations(align_he)
+    arg_types = {}
+    for k, v in _arg_types.items():
+        if isinstance(v, types.UnionType):
+            v = v.__args__[0]
+        arg_types[k] = v
+
+    with open(csv_path) as f:
+        files = [
+            {kk: arg_types[kk](vv) for kk, vv in rr.items() if kk in arg_types}
+            for rr in csv.DictReader(f)
+        ]
+
+    if dryrun:
+        for ff in files:
+            pprint.pprint({**ff, **kwargs})
+            print()
+        return
+
+    for ff in files:
+        align_he(**{**ff, **kwargs})
+
+
 if __name__ == "__main__":
-    import fire
     import sys
 
-    fire.Fire(align_he)
+    import fire
+
+    fire.Fire({"run-pair": align_he, "run-batch": run_batch})
 
     if ("--viz_coarse_napari" in sys.argv) or ("-v" in sys.argv):
         try:
@@ -248,17 +309,16 @@ if __name__ == "__main__":
 
     """
     Example 1: inspect coarse alignment using napari
-    python align_he.py \
+    python align_he.py run-pair\
         Z:\RareCyte-S3\P54_CRCstudy_Bridge\P54_S33_Full_Or6_A31_C90c_HMS@20221025_001610_632297.ome.tiff \
         "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\22199$P54_33_HE$US$SCAN$OR$001 _104050.svs" \
         "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\test" \
         --px_size1 0.325 --only_qc --only_coarse --viz_coarse_napari
 
     Example 2: process pair and output registered image
-    python align_he.py \
+    python align_he.py run-pair\
         Z:\RareCyte-S3\P54_CRCstudy_Bridge\P54_S33_Full_Or6_A31_C90c_HMS@20221025_001610_632297.ome.tiff \
         "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\22199$P54_33_HE$US$SCAN$OR$001 _104050.svs" \
         "X:\crc-scans\histowiz scans\20230105-orion_2_cycles\test" \
         --px_size1 0.325
-   
     """
