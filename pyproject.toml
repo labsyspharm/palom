@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "palom"
-version = "2024.9.1"
+version = "2024.10.1"
 description = "Piecewise alignment for layers of mosaics"
 authors = ["Yu-An Chen <atwood12@gmail.com>"]
 readme = "README.md"
@@ -32,6 +32,8 @@ yamale = "^4.0.2"
 loguru = "^0.5.3"
 ome-types = ">0.3"
 pint = ">=0.21"
+slideio = "^2.6.2"
+fire = ">=0.6.0"
 
 
 [build-system]
@@ -41,3 +43,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 palom-svs = "palom.cli.svs:main"
 palom-svs-helper = "palom.cli.helper:main"
+palom-align-he = "palom.cli.align_he:main"
+palom-pyramid = "palom.cli.pyramid_tools:main"
+palom-rgb-compress = "palom.cli.compress_rgb_jpeg:main"
