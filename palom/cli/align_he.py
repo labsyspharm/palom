@@ -30,6 +30,7 @@ def align_he(
     multi_obj: bool = False,
     multi_obj_kwarg: dict = None,
     intensity_in_range: tuple[int, int] = None,
+    jpeg_compress: bool = False,
 ):
     assert not (multi_res and multi_obj), (
         "setting both `multi_res` and `multi_obj` to `True` is not supported,"
@@ -164,7 +165,7 @@ def align_he(
         )
 
         if (mosaic.shape[0] == 3) & (intensity_in_range is not None):
-            out_dtype = mosaic.dtype
+            out_dtype = mosaic.dtype.name
             mosaic = mosaic.map_blocks(
                 lambda x: skimage.exposure.rescale_intensity(
                     x, in_range=intensity_in_range, out_range=out_dtype
@@ -184,6 +185,14 @@ def align_he(
             tile_size=1024,
             kwargs_tifffile=dict(photometric="rgb", planarconfig="separate"),
         )
+        if jpeg_compress:
+            from palom.cli import compress_rgb_jpeg
+
+            compress_rgb_jpeg.compress_rgb(
+                out_path,
+                output=out_path.parent
+                / out_path.name.replace(".ome.tif", "-jpeg.ome.tif"),
+            )
     return 0
 
 
@@ -292,9 +301,7 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
         align_he(**{**ff, **kwargs})
 
 
-if __name__ == "__main__":
-    import sys
-
+def main():
     import fire
 
     fire.Fire({"run-pair": align_he, "run-batch": run_batch})
@@ -306,6 +313,12 @@ if __name__ == "__main__":
             print("napari is not installed")
         else:
             napari.run()
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
 
     """
     Example 1: inspect coarse alignment using napari
