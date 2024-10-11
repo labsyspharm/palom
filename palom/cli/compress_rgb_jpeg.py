@@ -183,7 +183,11 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
 
     with open(csv_path) as f:
         files = [
-            {kk: arg_types[kk](vv) for kk, vv in rr.items() if kk in arg_types}
+            {
+                kk: arg_types[kk](vv)
+                for kk, vv in rr.items()
+                if (kk in arg_types) & (vv is not None)
+            }
             for rr in csv.DictReader(f)
         ]
 

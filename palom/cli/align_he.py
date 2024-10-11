@@ -1,4 +1,5 @@
 import pathlib
+import pprint
 import sys
 
 import matplotlib
@@ -32,6 +33,7 @@ def align_he(
     intensity_in_range: tuple[int, int] = None,
     jpeg_compress: bool = False,
 ):
+    _args = locals()
     assert not (multi_res and multi_obj), (
         "setting both `multi_res` and `multi_obj` to `True` is not supported,"
         " choose at most one"
@@ -45,6 +47,9 @@ def align_he(
     logger.add(sys.stderr)
     logger.add(log_path, rotation="5 MB")
     logger.info(f"Start processing {p2.name}")
+    logger.info(
+        f"\nFunction args\n{pprint.pformat(_args, indent=4, sort_dicts=False, width=600)}\n"
+    )
     out_path = out_dir / out_name
     assert "".join(out_path.suffixes[-2:]) in (".ome.tif", ".ome.tiff")
     out_path.parent.mkdir(exist_ok=True, parents=True)
@@ -290,7 +295,11 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
 
     with open(csv_path) as f:
         files = [
-            {kk: arg_types[kk](vv) for kk, vv in rr.items() if kk in arg_types}
+            {
+                kk: arg_types[kk](vv)
+                for kk, vv in rr.items()
+                if (kk in arg_types) & (vv is not None)
+            }
             for rr in csv.DictReader(f)
         ]
 
