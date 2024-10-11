@@ -42,7 +42,7 @@ __NOTE: The following steps are for Windows 64-bit machines ONLY.__
 1. Install `palom`
 
     ```bash
-    python -m pip install palom==2024.10.1 --no-deps
+    python -m pip install palom==2024.10.2 --no-deps
     ```
 
 ## Usage
