@@ -174,6 +174,9 @@ def align_he(
                 .astype(out_dtype),
                 dtype=out_dtype,
             )
+        tifffile_kwarg = dict(predictor=True)
+        if palom.pyramid.count_num_channels([mosaic]) == 3:
+            tifffile_kwarg.update(dict(photometric="rgb", planarconfig="separate"))
         palom.pyramid.write_pyramid(
             mosaics=[mosaic],
             output_path=out_path,
@@ -183,7 +186,7 @@ def align_he(
             downscale_factor=2,
             save_RAM=True,
             tile_size=1024,
-            kwargs_tifffile=dict(photometric="rgb", planarconfig="separate"),
+            kwargs_tifffile=tifffile_kwarg,
         )
         if jpeg_compress:
             from palom.cli import compress_rgb_jpeg
