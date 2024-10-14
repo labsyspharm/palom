@@ -178,6 +178,7 @@ def write_pyramid(
             tile=tile_shapes[0],
             **{**kwargs, **kwargs_tifffile},
         )
+        tif.filehandle.flush()
         logger.info("Generating pyramid")
         for level, (shape, tile_shape) in enumerate(zip(shapes[1:], tile_shapes[1:])):
             if verbose:
@@ -198,6 +199,7 @@ def write_pyramid(
                 tile=tile_shape,
                 **{**dict(compression=compression), **kwargs_tifffile},
             )
+            tif.filehandle.flush()
 
 
 def count_num_channels(imgs):
