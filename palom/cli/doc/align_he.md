@@ -13,11 +13,12 @@ Currently, the command assumes that the reference image is an immunofluorescent
 
 ## Installation
 
-__NOTE: If you’re using a non-Windows machine or want to install palom in your
-current Python environment, please follow the [installation instructions for
-`palom`](https://github.com/labsyspharm/palom?tab=readme-ov-file#installation).__
-
-__NOTE: The following steps are for Windows 64-bit machines ONLY.__
+> [!IMPORTANT]  
+> If you’re using a non-Windows machine or want to install palom in your current
+Python environment, please follow the [installation instructions for
+`palom`](https://github.com/labsyspharm/palom?tab=readme-ov-file#installation).
+>
+> __The following installation steps are for Windows 64-bit machines ONLY.__
 
 1. If Anaconda or Miniconda isn't already installed, [install
    miniconda](https://docs.conda.io/en/latest/miniconda.html)
@@ -46,6 +47,12 @@ __NOTE: The following steps are for Windows 64-bit machines ONLY.__
     ```
 
 ## Usage
+
+> [!IMPORTANT]  
+> The commands in the following usage section are split into multiple lines for
+> readability.
+>
+> __Enter the command in one line is recommended when running it.__
 
 ### a. Align two images (`palom-align-he run-pair`)
 
