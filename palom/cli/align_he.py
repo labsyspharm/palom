@@ -23,7 +23,7 @@ def align_he(
     px_size1: float = None,
     px_size2: float = None,
     n_keypoints: int = 10_000,
-    auto_mask=True,
+    auto_mask: bool = True,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
