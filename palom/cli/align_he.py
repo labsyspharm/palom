@@ -296,7 +296,7 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
     with open(csv_path) as f:
         files = [
             {
-                kk: arg_types[kk](vv)
+                kk: arg_types[kk](eval(vv))
                 for kk, vv in rr.items()
                 if (kk in arg_types) & (vv is not None)
             }
