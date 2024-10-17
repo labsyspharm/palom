@@ -179,7 +179,7 @@ def align_he(
                 .astype(out_dtype),
                 dtype=out_dtype,
             )
-        tifffile_kwarg = dict(predictor=True)
+        tifffile_kwarg = {}
         if palom.pyramid.count_num_channels([mosaic]) == 3:
             tifffile_kwarg.update(dict(photometric="rgb", planarconfig="separate"))
         palom.pyramid.write_pyramid(

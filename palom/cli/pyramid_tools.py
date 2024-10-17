@@ -176,7 +176,7 @@ def adjust_rgb_contrast(
         downscale_factor=2,
         compression="zlib",
         save_RAM=True,
-        kwargs_tifffile=dict(photometric="rgb", planarconfig="separate", predictor=True)
+        kwargs_tifffile=dict(photometric="rgb", planarconfig="separate")
     )
     return 0
 
