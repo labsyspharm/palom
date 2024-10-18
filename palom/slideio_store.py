@@ -17,7 +17,7 @@ def init_attrs(store: MutableMapping, attrs: Mapping[str, Any], path: str = None
     store[path + attrs_key] = json_dumps(attrs)
 
 
-def create_meta_store(scene: slideio.Scene) -> Dict[str, bytes]:
+def create_meta_store(scene: slideio.Scene, tilesize: int) -> Dict[str, bytes]:
     """Creates a dict containing the zarr metadata for the multiscale openslide image."""
     level_info = _parse_level_info(scene=scene)
     store = dict()
@@ -38,7 +38,7 @@ def create_meta_store(scene: slideio.Scene) -> Dict[str, bytes]:
             store,
             path=str(i),
             shape=(*info["shape"], scene.num_channels),
-            chunks=(*info["tile_size"], scene.num_channels),
+            chunks=(tilesize, tilesize, scene.num_channels),
             dtype=scene.get_channel_data_type(0),
             compressor=None,
         )
@@ -105,16 +105,19 @@ class SlideIoVsiStore(BaseStore):
     ----------
     path: str
         The file to open with OpenSlide.
+    scene: int
+        Selected scene where full resolution pyramid data is stored.
     tilesize: int
         Desired "chunk" size for zarr store.
     """
 
-    def __init__(self, path: str, scene: int = 0):
+    def __init__(self, path: str, scene: int = 0, tilesize: int = 1024):
         # self._slide = slideio.Slide(path, driver="VSI")
         self._slide = slideio_vsi_patch(path)
         self._scene = self._slide.get_scene(scene)
         self._level_info = _parse_level_info(self._scene)
-        self._store = create_meta_store(self._scene)
+        self._tilesize = self._optimize_tile_size(tilesize)
+        self._store = create_meta_store(self._scene, self._tilesize)
 
     def __getitem__(self, key: str):
         if key in self._store:
@@ -126,7 +129,7 @@ class SlideIoVsiStore(BaseStore):
         try:
             x, y, level = _parse_chunk_path(key)
             location = self._ref_pos(x, y, level)
-            size = self._level_info[level]["tile_size"]
+            size = (self._tilesize, self._tilesize)
             tile = self._scene.read_block(location, size)
         except ArgumentError as err:
             # Can occur if trying to read a closed slide
@@ -168,10 +171,24 @@ class SlideIoVsiStore(BaseStore):
 
     def _ref_pos(self, x: int, y: int, level: int):
         dsample = self._level_info[level]["downsample"]
-        ty, tx = self._level_info[level]["tile_size"]
+        ty, tx = (self._tilesize, self._tilesize)
         xref = int(x * dsample * tx)
         yref = int(y * dsample * ty)
         return xref, yref, tx * dsample, ty * dsample
+
+    def _optimize_tile_size(self, tilesize):
+        vsi_tile_size = self._level_info[0]["tile_size"]
+        optimized_tile_size = np.ceil(
+            np.divide(tilesize, vsi_tile_size).max()
+        ) * np.max(vsi_tile_size)
+        optimized_tile_size = optimized_tile_size.astype("int")
+        if tilesize != optimized_tile_size:
+            import logging
+
+            logging.warning(
+                f"Adjust tile size to {optimized_tile_size} (was {tilesize})"
+            )
+        return optimized_tile_size
 
     def keys(self):
         return self._store.keys()
