@@ -15,8 +15,8 @@ Currently, the command assumes that the reference image is an immunofluorescent
 
 > [!IMPORTANT]  
 > If you’re using a non-Windows machine or want to install palom in your current
-Python environment, please follow the [installation instructions for
-`palom`](https://github.com/labsyspharm/palom?tab=readme-ov-file#installation).
+> Python environment, please follow the [installation instructions for
+> `palom`](https://github.com/labsyspharm/palom?tab=readme-ov-file#installation).
 >
 > __The following installation steps are for Windows 64-bit machines ONLY.__
 
@@ -132,9 +132,12 @@ correspond to the parameters of the `run-pair` subcommand.
 For each row in the CSV file, `run-batch` executes the `run-pair` function to
 align the corresponding image pair. If additional arguments are specified in the
 `run-batch` command itself (outside of the CSV), they will be passed to each
-execution of `run-pair`. In cases where an argument is provided both in the CSV
-and in the command-line call, the argument from the command-line call will take
-precedence, overriding the CSV value.
+execution of `run-pair`.
+
+> [!TIP]  
+> In cases where an argument is provided both in the CSV and in the command-line
+> call, the CSV value will take precedence, overriding the argument from the
+> command-line call.
 
 ---
 

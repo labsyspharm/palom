@@ -308,13 +308,13 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
         ]
 
     if dryrun:
-        for ff in files:
-            pprint.pprint({**ff, **kwargs})
+        for kk in csv_kwargs:
+            pprint.pprint({**kwargs, **kk}, sort_dicts=False)
             print()
         return
 
-    for ff in files:
-        align_he(**{**ff, **kwargs})
+    for kk in csv_kwargs:
+        align_he(**{**kwargs, **kk})
 
 
 def main():
