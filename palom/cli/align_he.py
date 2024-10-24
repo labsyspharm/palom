@@ -285,6 +285,8 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
     import pprint
     import types
 
+    from fire.parser import DefaultParseValue
+
     if print_args:
         _args = [str(vv) for vv in inspect.signature(align_he).parameters.values()]
         print(f"\nFunction args\n{pprint.pformat(_args, indent=4)}\n")
@@ -296,9 +298,9 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
         arg_types[k] = v
 
     with open(csv_path) as f:
-        files = [
+        csv_kwargs = [
             {
-                kk: arg_types[kk](eval(vv))
+                kk: arg_types[kk](DefaultParseValue(vv))
                 for kk, vv in rr.items()
                 if (kk in arg_types) & (vv is not None)
             }
