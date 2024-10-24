@@ -24,6 +24,7 @@ def align_he(
     px_size2: float = None,
     n_keypoints: int = 10_000,
     auto_mask: bool = True,
+    thumbnail_max_size: int = 2000,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -81,6 +82,7 @@ def align_he(
         np.asarray(aligner.moving_thumbnail),
         n_keypoints=n_keypoints,
         auto_mask=auto_mask,
+        max_size=thumbnail_max_size,
     )
     aligner.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
     fig, ax = plt.gcf(), plt.gca()

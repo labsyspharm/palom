@@ -267,6 +267,11 @@ FLAGS
         Help: Automatically mask non-tissue regions in the image during
               coarse alignment
         Default: True
+    --thumbnail_max_size=THUMBNAIL_MAX_SIZE
+        Help: Max size (width and height) of the thumbnails used in coarse
+              alignment; will downsize thumbnails if any of them exceeds
+        Type: int
+        Default: 2000
     --only_coarse=ONLY_COARSE
         Help: Only perform coarse alignment
         Type: bool
