@@ -94,6 +94,7 @@ def search_best_match_config(
 def search_then_register(
     img_left,
     img_right,
+    max_size=2000,
     n_keypoints=5000,
     auto_mask=True,
     plot_match_result=True,
@@ -102,6 +103,13 @@ def search_then_register(
     search_kwargs = search_kwargs or {}
     img1 = img_left.astype("float32")
     img2 = img_right.astype("float32")
+
+    shape_max = max(*img_left.shape, *img_right.shape)
+    downsize_factor = int(np.ceil(shape_max / max_size))
+
+    img1 = img_util.cv2_downscale_local_mean(img1, downsize_factor)
+    img2 = img_util.cv2_downscale_local_mean(img2, downsize_factor)
+
     _, config = search_best_match_config(img1, img2, **search_kwargs)
     _img1, _img2 = match_img_with_config(
         img1,
@@ -121,15 +129,23 @@ def search_then_register(
     )
     mx_flip = np.eye(3)
     if config[2] == np.flipud:
-        mx_flip = register_util.get_flip_mx(img_right.shape, 0)
+        mx_flip = register_util.get_flip_mx(img2.shape, 0)
     if mx is None:
         logger.warning(
             "Feature matching failed. Returning identity matrix as placeholder"
         )
         mx = np.eye(3)[:2]
         match = np.zeros(1, "bool")
-    mx = (np.vstack([mx, [0, 0, 1]]) @ mx_flip)[:2, :]
+    mx = (np.vstack([mx, [0, 0, 1]]) @ mx_flip)
+
+    def mx_scale(scale):
+        mx = np.eye(3) * scale
+        mx[2, 2] = 1
+        return mx
+
+    mx_full_res = mx_scale(downsize_factor) @ mx @ mx_scale(1 / downsize_factor)
+
     logger.debug(
         f"{match.sum():6} matches; {n_keypoints:6} keypoints; mask: {auto_mask}"
     )
-    return mx
+    return mx_full_res[:2]
