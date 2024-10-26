@@ -171,10 +171,14 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
     import pprint
     import types
 
+    from fire.parser import DefaultParseValue
+
+    func = compress_rgb
+
     if print_args:
-        _args = [str(vv) for vv in inspect.signature(compress_rgb).parameters.values()]
+        _args = [str(vv) for vv in inspect.signature(func).parameters.values()]
         print(f"\nFunction args\n{pprint.pformat(_args, indent=4)}\n")
-    _arg_types = inspect.get_annotations(compress_rgb)
+    _arg_types = inspect.get_annotations(func)
     arg_types = {}
     for k, v in _arg_types.items():
         if isinstance(v, types.UnionType):
@@ -182,9 +186,9 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
         arg_types[k] = v
 
     with open(csv_path) as f:
-        files = [
+        csv_kwargs = [
             {
-                kk: arg_types[kk](eval(vv))
+                kk: arg_types[kk](DefaultParseValue(vv))
                 for kk, vv in rr.items()
                 if (kk in arg_types) & (vv is not None)
             }
@@ -192,13 +196,13 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
         ]
 
     if dryrun:
-        for ff in files:
-            pprint.pprint({**ff, **kwargs})
+        for kk in csv_kwargs:
+            pprint.pprint({**kwargs, **kk}, sort_dicts=False)
             print()
         return
 
-    for ff in files:
-        compress_rgb(**{**ff, **kwargs})
+    for kk in csv_kwargs:
+        func(**{**kwargs, **kk})
 
 
 def main():

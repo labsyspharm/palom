@@ -287,10 +287,12 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
 
     from fire.parser import DefaultParseValue
 
+    func = align_he
+
     if print_args:
-        _args = [str(vv) for vv in inspect.signature(align_he).parameters.values()]
+        _args = [str(vv) for vv in inspect.signature(func).parameters.values()]
         print(f"\nFunction args\n{pprint.pformat(_args, indent=4)}\n")
-    _arg_types = inspect.get_annotations(align_he)
+    _arg_types = inspect.get_annotations(func)
     arg_types = {}
     for k, v in _arg_types.items():
         if isinstance(v, types.UnionType):
@@ -314,7 +316,7 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
         return
 
     for kk in csv_kwargs:
-        align_he(**{**kwargs, **kk})
+        func(**{**kwargs, **kk})
 
 
 def main():
