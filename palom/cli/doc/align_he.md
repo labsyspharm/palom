@@ -144,14 +144,15 @@ execution of `run-pair`.
 Example CSV file (`example.csv`):
 
 ```csv
-p1,p2
+p1,p2,intensity_in_range
 /path/to/reference/image/P1.ome.tiff,/path/to/moving/he/image/P2.vsi
-/path/to/X1.ome.tif,/path/to/Y1.vsi
+/path/to/X1.ome.tif,/path/to/Y1.vsi,"(0, 200)"
 /path/to/X2.ome.tif,/path/to/Y2.vsi
 ```
 
-Run all the image pairs listed in the CSV file, use the same output directory,
-with only coarse alignment and no transformation of the moving images:
+Run the above 3 image pairs in the CSV file, use the same output directory, with
+only coarse alignment and no transformation of the moving images (note that
+`intensity_in_range` is specified in the second pair):
 
 ```bash
 palom-align-he run-batch example.csv
