@@ -20,7 +20,7 @@ scikit-image = ">=0.18, <0.20"
 scikit-learn = ">=0.24"
 opencv-python = "^4.5.3.56"
 zarr = ">=2.10, <2.15" # bug when reading GT450 SVS @ 2.15+
-tifffile = ">=2021.10.12"
+tifffile = ">=2021.10.12, <=2024.7.2"
 imagecodecs = ">=2021.11.11"
 matplotlib = "^3.4.3"
 tqdm = "^4.62.3"
@@ -32,7 +32,7 @@ yamale = "^4.0.2"
 loguru = "^0.5.3"
 ome-types = ">0.3"
 pint = ">=0.21"
-slideio = "^2.6.2"
+slideio = "^2.6.3"
 fire = ">=0.6.0"
 
 
