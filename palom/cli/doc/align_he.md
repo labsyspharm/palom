@@ -43,7 +43,7 @@ Currently, the command assumes that the reference image is an immunofluorescent
 1. Install `palom`
 
     ```bash
-    python -m pip install palom==2024.10.2 --no-deps
+    python -m pip install palom==2024.11.1 --no-deps
     ```
 
 ## Usage
