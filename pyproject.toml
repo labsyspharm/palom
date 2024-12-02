@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "palom"
-version = "2024.4.1"
+version = "2024.11.1"
 description = "Piecewise alignment for layers of mosaics"
 authors = ["Yu-An Chen <atwood12@gmail.com>"]
 readme = "README.md"
@@ -20,7 +20,7 @@ scikit-image = ">=0.18, <0.20"
 scikit-learn = ">=0.24"
 opencv-python = "^4.5.3.56"
 zarr = ">=2.10, <2.15" # bug when reading GT450 SVS @ 2.15+
-tifffile = ">=2021.10.12"
+tifffile = ">=2021.10.12, <=2024.7.2"
 imagecodecs = ">=2021.11.11"
 matplotlib = "^3.4.3"
 tqdm = "^4.62.3"
@@ -32,6 +32,8 @@ yamale = "^4.0.2"
 loguru = "^0.5.3"
 ome-types = ">0.3"
 pint = ">=0.21"
+slideio = "^2.6.3"
+fire = ">=0.6.0"
 
 
 [build-system]
@@ -42,3 +44,6 @@ build-backend = "poetry.core.masonry.api"
 palom-svs = "palom.cli.svs:main"
 palom-svs-helper = "palom.cli.helper:main"
 palom-multicycle-tif = "palom.cli.align_multiple_cycles:main"
+palom-align-he = "palom.cli.align_he:main"
+palom-pyramid = "palom.cli.pyramid_tools:main"
+palom-rgb-compress = "palom.cli.compress_rgb_jpeg:main"

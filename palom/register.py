@@ -232,18 +232,32 @@ def ensambled_match(
         ransacReprojThreshold=ransacReprojThreshold,
         maxIters=5000
     )
-    if plot_match_result == True:
+    if plot_match_result:
         _, ax = plt.subplots()
+
+        def _rescale_img(img):
+            return np.log(
+                skimage.exposure.rescale_intensity(
+                    img,
+                    in_range=tuple(np.percentile(img, [1, 99])),
+                    out_range=(500, 5000),
+                )
+            )
+
+        pimg_left = _rescale_img(img_left)
+        pimg_right = _rescale_img(img_right)
         skimage.feature.plot_matches(
             ax,
-            np.log(skimage.exposure.rescale_intensity(img_left, out_range=(1, 4095))),
-            np.log(skimage.exposure.rescale_intensity(img_right, out_range=(1, 4095))),
-            np.fliplr(all_src), np.fliplr(all_dst),
-            np.arange(len(all_src)).repeat(2).reshape(-1, 2)[mask.flatten()>0],
+            pimg_left,
+            pimg_right,
+            np.fliplr(all_src),
+            np.fliplr(all_dst),
+            np.arange(len(all_src)).repeat(2).reshape(-1, 2)[mask.flatten() > 0],
             keypoints_color=np.divide([255, 215, 0, 50], 255),
-            matches_color='deepskyblue',
-            only_matches=False
+            matches_color="deepskyblue",
+            only_matches=False,
         )
+        ax.images[0].set_clim(min(pimg_left.min(), pimg_right.min()))
         for line in ax.get_lines():
             line.set_alpha(0.5)
             line.set_linewidth(.5)

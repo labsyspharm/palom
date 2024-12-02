@@ -196,7 +196,7 @@ class MultiResAligner:
         for ii, (aa, idx, dd) in enumerate(
             zip(aligners, idxs, downsample_factors)
         ):
-            out[[mask == ii]*2] = (
+            out[np.array([mask == ii]*2)] = (
                 dd * aa.shifts[idx[mask == ii]].T.flatten()
             )
         self.shifts = out.reshape(2, -1).T

@@ -150,6 +150,37 @@ def compress_rarecyte_ome_tiff(img_path, out_path=None, overwrite=False):
     return
 
 
+def adjust_rgb_contrast(
+    in_path: str,
+    in_range: tuple[float, float],
+):
+    import skimage.exposure
+
+    reader = palom.reader.OmePyramidReader(in_path)
+    assert reader.pyramid[0].shape[0] == 3
+    assert reader.pixel_dtype == "uint8"
+    assert ".ome.tif" in reader.path.name
+    out_name = ".".join(reader.path.name.split(".")[:-2]) + "-adjusted.ome.tif"
+    ".".join(reader.path.name.split(".")[:-2])
+    out_path = reader.path.parent / out_name
+    mosaic = reader.pyramid[0].map_blocks(
+        lambda x: skimage.exposure.rescale_intensity(
+            x, in_range=in_range, out_range="uint8"
+        ).astype("uint8"),
+        dtype="uint8",
+    )
+    palom.pyramid.write_pyramid(
+        [mosaic],
+        out_path,
+        pixel_size=reader.pixel_size,
+        downscale_factor=2,
+        compression="zlib",
+        save_RAM=True,
+        kwargs_tifffile=dict(photometric="rgb", planarconfig="separate")
+    )
+    return 0
+
+
 def main():
     import fire
     fire.Fire({
@@ -157,6 +188,7 @@ def main():
         'extract': extract_channels,
         'compress': compress_pyramid,
         'compress-rarecyte': compress_rarecyte_ome_tiff,
+        'adjust-rgb-contrast': adjust_rgb_contrast,
     })
 
 

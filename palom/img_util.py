@@ -48,9 +48,11 @@ def is_single_channel(img):
 
 def entropy_mask(img, kernel_size=9):
     img = skimage.exposure.rescale_intensity(
-        img, out_range=np.uint8
-    ).astype(np.uint8)
+        # more bins is useful for IF images
+        img, out_range=(0, 1000)
+    ).astype(np.uint16)
     entropy = skimage.filters.rank.entropy(img, np.ones((kernel_size, kernel_size)))
+    # threshold_otsu is needed for bright-field images
     return entropy > skimage.filters.threshold_otsu(entropy)
 
 
