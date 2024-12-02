@@ -27,13 +27,13 @@ def parse_args():
         dest='out_name',
         help='output file name'
     )
-    #parser.add_argument(
-    #    '--thumbnail_channel',
-    #    metavar='thumbnail_channel',
-    #    type=int,
-    #    default=1,
-    #    help='channel to use for thumbnail images'
-    #)
+    parser.add_argument(
+        '--thumbnail_level',
+        metavar='thumbnail_level',
+        type=int,
+        default=None,
+        help='Level to use for coarse alignment'
+    )
     parser.add_argument(
         '--channel',
         dest='channel',
@@ -89,6 +89,7 @@ def align_multiple_cycles(args):
 
     out_dir = pathlib.Path(args.out_dir)
     img_list = [pathlib.Path(img_path) for img_path in args.img_list]
+    assert len(img_list) >= 2, "At least two images are required for registration"
 
     if args.out_name is None:
         out_name = f"{img_list[1].stem}-registered.ome.tif"
@@ -105,6 +106,8 @@ def align_multiple_cycles(args):
     moving_readers = [palom.reader.OmePyramidReader(file) for file in img_list[1:]]
 
     LEVEL = 0
+    if args.thumbnail_level is not None:
+        THUMBNAIL_LEVEL = ref_reader.get_thumbnail_level_of_size(2000)
     mosaic_list = [ref_reader.pyramid[LEVEL]]
     for idx, moving_reader in enumerate(moving_readers):
         aligner = palom.align.Aligner(
@@ -115,12 +118,12 @@ def align_multiple_cycles(args):
                 # better contrast
                 moving_img=moving_reader.read_level_channels(LEVEL, channel),
                 # select the same channels for the thumbnail images
-                ref_thumbnail=ref_reader.read_level_channels(1, channel).compute(),
-                moving_thumbnail=moving_reader.read_level_channels(1, channel).compute(),
+                ref_thumbnail=ref_reader.read_level_channels(THUMBNAIL_LEVEL, channel).compute(),
+                moving_thumbnail=moving_reader.read_level_channels(THUMBNAIL_LEVEL, channel).compute(),
                 # specify the downsizing factors so that the affine matrix can be scaled to
                 # match the registration reference
-                ref_thumbnail_down_factor=ref_reader.level_downsamples[1] /ref_reader.level_downsamples[LEVEL],
-                moving_thumbnail_down_factor=moving_reader.level_downsamples[1] / moving_reader.level_downsamples[LEVEL]
+                ref_thumbnail_down_factor=ref_reader.level_downsamples[THUMBNAIL_LEVEL] /ref_reader.level_downsamples[LEVEL],
+                moving_thumbnail_down_factor=moving_reader.level_downsamples[THUMBNAIL_LEVEL] / moving_reader.level_downsamples[LEVEL]
             )
 
         aligner.coarse_register_affine(
