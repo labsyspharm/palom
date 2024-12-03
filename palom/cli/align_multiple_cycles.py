@@ -106,8 +106,11 @@ def align_multiple_cycles(args):
     moving_readers = [palom.reader.OmePyramidReader(file) for file in img_list[1:]]
 
     LEVEL = 0
-    if args.thumbnail_level is not None:
+    if args.thumbnail_level is None:
         THUMBNAIL_LEVEL = ref_reader.get_thumbnail_level_of_size(2000)
+    else:
+        THUMBNAIL_LEVEL = args.thumbnail_level
+
     mosaic_list = [ref_reader.pyramid[LEVEL]]
     for idx, moving_reader in enumerate(moving_readers):
         aligner = palom.align.Aligner(
