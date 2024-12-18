@@ -233,7 +233,7 @@ class VsiReader(DaPyramidChannelReader):
 
     def pyramid_from_vsi(self) -> list[da.Array]:
         return [
-            da.from_zarr(self.store, component=d["path"])[..., :3]
+            da.from_zarr(self.store, component=d["path"])
             for d in self.zarr.attrs["multiscales"][0]["datasets"]
         ]
 
