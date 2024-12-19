@@ -69,26 +69,6 @@ def _parse_level_info(scene: slideio.Scene):
     return level_info
 
 
-def slideio_vsi_patch(path: str):
-    path = Path(path)
-    assert path.name.endswith(".vsi")
-    data_dir = path.parent / f'_{path.name.replace(".vsi", "")}_'
-    assert data_dir.exists()
-    ets_files = sorted(data_dir.rglob("*.ets"))
-    assert len(ets_files)
-    temp_files = [ff.replace(ff.parent / f"{ff.name}_") for ff in ets_files]
-    for tt, ee in zip(temp_files, ets_files):
-        tt.replace(ee)
-        try:
-            slide = slideio.open_slide(str(path), "VSI")
-        except RuntimeError:
-            ee.replace(tt)
-    for tt, ee in zip(temp_files, ets_files):
-        if tt.exists():
-            tt.replace(ee)
-    return slide
-
-
 def _parse_pixel_size(slide: slideio.Slide):
     metadata = slide.raw_metadata
     pattern = r'"Physical pixel size","value":"\(([\d.]+)'
@@ -112,8 +92,7 @@ class SlideIoVsiStore(BaseStore):
     """
 
     def __init__(self, path: str, scene: int = 0, tilesize: int = 1024):
-        # self._slide = slideio.Slide(path, driver="VSI")
-        self._slide = slideio_vsi_patch(path)
+        self._slide = slideio.Slide(path, driver="VSI")
         self._scene = self._slide.get_scene(scene)
         self._level_info = _parse_level_info(self._scene)
         self._tilesize = self._optimize_tile_size(tilesize)
