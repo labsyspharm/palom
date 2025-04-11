@@ -118,13 +118,18 @@ class OmePyramidReader(DaPyramidChannelReader):
                     da_level = da.from_zarr(z[0])
                 else:
                     da_level = da.from_zarr(z)
+                da_level = da_level.squeeze()
                 if da_level.ndim == 2:
                     da_level = da_level.reshape(1, *da_level.shape)
-                if da_level.ndim == 3:
+                elif da_level.ndim == 3:
                     if da_level.shape[2] in (3, 4):
                         da_level = da.moveaxis(da_level, 2, 0)
+                else:
+                    raise ValueError(
+                        f"Image with {da_level.ndim} dimension {da_level.shape} is not supported"
+                    )
                 da_pyramid.append(da_level)
-            return da_pyramid
+        return da_pyramid
 
     @property
     def pixel_size(self) -> float:
