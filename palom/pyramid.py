@@ -165,16 +165,22 @@ def write_pyramid(
 
     logger.info(f"Writing to {path}")
     with tifffile.TiffWriter(path, bigtiff=True) as tif:
-        kwargs = dict(metadata=metadata, software=software, compression=compression)
+        kwargs = dict(
+            compression=compression,
+            resolutionunit="CENTIMETER",
+            dtype=dtype,
+        )
         if kwargs_tifffile is None:
             kwargs_tifffile = {}
         tif.write(
+            metadata=metadata,
+            software=software,
             data=tile_from_combined_mosaics(
                 mosaics, tile_shape=tile_shapes[0], save_RAM=save_RAM
             ),
             shape=(num_channels, *shapes[0]),
             subifds=int(num_levels - 1),
-            dtype=dtype,
+            resolution=(1e4 / pixel_size, 1e4 / pixel_size),
             tile=tile_shapes[0],
             **{**kwargs, **kwargs_tifffile},
         )
@@ -183,6 +189,7 @@ def write_pyramid(
         for level, (shape, tile_shape) in enumerate(zip(shapes[1:], tile_shapes[1:])):
             if verbose:
                 logger.info(f"    Level {level+1} ({shape[0]} x {shape[1]})")
+            mag = downscale_factor ** (level + 1)
             tif.write(
                 data=tile_from_pyramid(
                     path,
@@ -195,9 +202,9 @@ def write_pyramid(
                 ),
                 shape=(num_channels, *shape),
                 subfiletype=1,
-                dtype=dtype,
+                resolution=(1e4 / mag / pixel_size, 1e4 / mag / pixel_size),
                 tile=tile_shape,
-                **{**dict(compression=compression), **kwargs_tifffile},
+                **{**kwargs, **kwargs_tifffile},
             )
             tif.filehandle.flush()
 
