@@ -80,11 +80,10 @@ def block_affine(
         return np.ones(block_shape, dtype=src_dtype) * fill_empty
     translation_offset = transformation([[x0_src, y0_src]]) - (x0_dst, y0_dst)
 
+    mx = np.array(transformation.params)
+    mx[:2, 2] = translation_offset.ravel()
     block_tform = skimage.transform.AffineTransform(
-        translation=translation_offset,
-        scale=transformation.scale,
-        rotation=transformation.rotation,
-        shear=transformation.shear
+        matrix=mx
     )
 
     src_img_block = np.asarray(src_img_block)
