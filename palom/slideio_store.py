@@ -7,7 +7,7 @@ from typing import Any, Dict, Mapping, MutableMapping
 
 import numpy as np
 import slideio
-from zarr.storage import BaseStore, _path_to_prefix, attrs_key, init_array, init_group
+from zarr.storage import Store, _path_to_prefix, attrs_key, init_array, init_group
 from zarr.util import json_dumps, json_loads, normalize_storage_path
 
 
@@ -78,7 +78,7 @@ def _parse_pixel_size(slide: slideio.Slide):
     return float(found[0])
 
 
-class SlideIoVsiStore(BaseStore):
+class SlideIoVsiStore(Store):
     """Wraps an OpenSlide object as a multiscale Zarr Store.
 
     Parameters
@@ -121,6 +121,9 @@ class SlideIoVsiStore(BaseStore):
 
         return np.array(tile).tobytes()
 
+    def getitems(self, keys, *, contexts):
+        return {k: self[k] for k in keys}
+
     def __contains__(self, key: str):
         return key in self._store
 
@@ -134,7 +137,7 @@ class SlideIoVsiStore(BaseStore):
         raise RuntimeError("__setitem__ not implemented")
 
     def __delitem__(self, key):
-        raise RuntimeError("__setitem__ not implemented")
+        raise RuntimeError("__delitem__ not implemented")
 
     def __iter__(self):
         return iter(self.keys())

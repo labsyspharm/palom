@@ -168,10 +168,10 @@ class SvsReader(DaPyramidChannelReader):
         # FIXME maybe move napari_lazy_openslide to optional dependency?
         # https://python-poetry.org/docs/pyproject/#extras
         # https://github.com/AllenCellModeling/aicsimageio/blob/main/aicsimageio/readers/bioformats_reader.py#L33-L40
-        from napari_lazy_openslide import OpenSlideStore
+        from . import openslide_store
 
         self.path = pathlib.Path(path)
-        self.store = OpenSlideStore(str(self.path))
+        self.store = openslide_store.OpenSlideStore(str(self.path))
         self.zarr = zarr.open(self.store, mode="r")
         self._pixel_size = pixel_size
         pyramid = self.pyramid_from_svs()

@@ -19,7 +19,7 @@ python = "^3.7.8"
 scikit-image = ">=0.18, <0.20"
 scikit-learn = ">=0.24"
 opencv-python-headless = ">=4.9"
-zarr = ">=2.10, <2.15" # bug when reading GT450 SVS @ 2.15+
+zarr = ">=2.17, <3"
 tifffile = ">=2021.10.12, <=2024.7.2"
 imagecodecs = ">=2021.11.11"
 matplotlib = "^3.4.3"
