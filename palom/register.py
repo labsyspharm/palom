@@ -1,5 +1,4 @@
 import functools
-import inspect
 import itertools
 import warnings
 
@@ -7,17 +6,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.fft
-import skimage.exposure
-import skimage.feature
 import skimage.registration
 from loguru import logger
 
 from . import img_util, register_util
-
-if hasattr(skimage.registration, 'phase_cross_correlation'):
-    register_translation = skimage.registration.phase_cross_correlation
-else:
-    register_translation = skimage.feature.register_translation
 
 
 #
@@ -42,12 +34,8 @@ def phase_cross_correlation(img1, img2, sigma, upsample=10, module='skimage'):
                 'ignore', 'invalid value encountered in',
                 RuntimeWarning,
             )
-            kwargs = dict(upsample_factor=upsample)
-            # `normalization` kwarg was introduced in skimage v0.19
-            if 'normalization' in inspect.signature(register_translation).parameters:
-                kwargs.update(normalization=None)
-            shift, _error, _phasediff = register_translation(
-                img1w, img2w, **kwargs
+            shift, _error, _phasediff = skimage.registration.phase_cross_correlation(
+                img1w, img2w, upsample_factor=upsample, normalization=None
             )
    
     elif module == 'cv2':
@@ -246,13 +234,13 @@ def ensambled_match(
 
         pimg_left = _rescale_img(img_left)
         pimg_right = _rescale_img(img_right)
-        skimage.feature.plot_matches(
-            ax,
-            pimg_left,
-            pimg_right,
-            np.fliplr(all_src),
-            np.fliplr(all_dst),
-            np.arange(len(all_src)).repeat(2).reshape(-1, 2)[mask.flatten() > 0],
+        skimage.feature.plot_matched_features(
+            ax=ax,
+            image0=pimg_left,
+            image1=pimg_right,
+            keypoints0=np.fliplr(all_src),
+            keypoints1=np.fliplr(all_dst),
+            matches=np.arange(len(all_src)).repeat(2).reshape(-1, 2)[mask.flatten() > 0],
             keypoints_color=np.divide([255, 215, 0, 50], 255),
             matches_color="deepskyblue",
             only_matches=False,
