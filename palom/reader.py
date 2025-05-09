@@ -68,10 +68,14 @@ class DaPyramidChannelReader:
         ]
 
     @property
-    def level_downsamples(self) -> dict[int, int]:
-        heights = [ss.shape[1] for ss in self.pyramid]
-        heights.insert(0, heights[0])
-        downsamples = [round(h1 / h2) for h1, h2 in itertools.pairwise(heights)]
+    def level_downsamples(self) -> dict[int, float]:
+        shapes = [ss.shape[1:3] for ss in self.pyramid]
+        shapes.insert(0, shapes[0])
+        # FIXME should use image-based registration to further refine the
+        # downsample factor between levels
+        downsamples = [
+            np.divide(s1, s2).mean() for s1, s2 in itertools.pairwise(shapes)
+        ]
         return dict(enumerate(itertools.accumulate(downsamples, func=np.multiply)))
 
     @property
