@@ -71,11 +71,36 @@ def _parse_level_info(scene: slideio.Scene):
 
 def _parse_pixel_size(slide: slideio.Slide):
     metadata = slide.raw_metadata
-    pattern = r'"Physical pixel size","value":"\(([\d.]+)'
-    found = re.findall(pattern=pattern, string=metadata)
+    name = "Physical pixel size"
+    found = find_objects_with_name(metadata, name)
     if not found:
         return 1.0
-    return float(found[0])
+    return eval(found[0].get("value", "(1.0, 1.0)"))[0]
+
+
+def find_objects_with_name(json_text, name):
+    """
+    Finds and extracts JSON objects with a specified "name" property.
+
+    Args:
+        json_text (str): The JSON content as a string.
+        name (str): The value of the "name" property to search for.
+
+    Returns:
+        list: A list of matching JSON objects as Python dictionaries.
+    """
+    import json
+
+    # Regex pattern to match objects with the specified "name"
+    pattern = rf'{{[^{{]*?"name":\s*"{re.escape(name)}".*?}}'
+
+    # Find all matches
+    matches = re.findall(pattern, json_text)
+
+    # Convert matches to Python dictionaries
+    objects = [json.loads(match) for match in matches]
+
+    return objects
 
 
 class SlideIoVsiStore(Store):
