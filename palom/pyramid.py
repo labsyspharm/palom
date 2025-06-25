@@ -73,7 +73,7 @@ def format_channel_names(num_channels_each_mosaic, channel_names):
         if len(nl) == 1:
             nl = nl * c
         if len(nl) != c:
-            nl = [f"Mosaic {idx+1}"] * c
+            nl = [f"Mosaic {idx + 1}"] * c
         matched_channel_names.extend(nl)
     return make_unique_str(matched_channel_names)
 
@@ -138,9 +138,9 @@ def write_pyramid(
     shapes = pyramid_setting.pyramid_shapes(base_shape)
 
     if tile_size is not None:
-        assert (
-            tile_size % 16 == 0
-        ), f"tile_size must be None or multiples of 16, not {tile_size}"
+        assert tile_size % 16 == 0, (
+            f"tile_size must be None or multiples of 16, not {tile_size}"
+        )
         tile_shapes = [(tile_size, tile_size)] * num_levels
 
     dtype = ref_m.dtype
@@ -192,7 +192,7 @@ def write_pyramid(
         logger.info("Generating pyramid")
         for level, (shape, tile_shape) in enumerate(zip(shapes[1:], tile_shapes[1:])):
             if verbose:
-                logger.info(f"    Level {level+1} ({shape[0]} x {shape[1]})")
+                logger.info(f"    Level {level + 1} ({shape[0]} x {shape[1]})")
             mag = downscale_factor ** (level + 1)
             tif.write(
                 data=tile_from_pyramid(
@@ -230,8 +230,8 @@ def tile_from_combined_mosaics(mosaics, tile_shape, save_RAM=False):
             with tqdm.dask.TqdmCallback(
                 ascii=True,
                 desc=(
-                    f"Assembling mosaic {idx+1:2}/{n:2} (channel"
-                    f" {cidx+1:2}/{m.shape[0]:2})"
+                    f"Assembling mosaic {idx + 1:2}/{n:2} (channel"
+                    f" {cidx + 1:2}/{m.shape[0]:2})"
                 ),
             ):
                 c = da_to_zarr(c) if save_RAM else c.compute()
