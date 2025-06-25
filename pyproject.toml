@@ -32,7 +32,7 @@ yamale = "^4.0.2"
 loguru = "^0.5.3"
 ome-types = ">0.3"
 pint = ">=0.21"
-slideio = ">=2.6.3, <2.7"
+slideio = ">=2.7.1"
 fire = ">=0.6.0"
 
 
