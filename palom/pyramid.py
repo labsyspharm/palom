@@ -116,11 +116,11 @@ def write_pyramid(
     pixel_size=1,
     channel_names=None,
     verbose=True,
-    downscale_factor=4,
-    compression=None,
+    downscale_factor=2,
+    compression="zlib",
     is_mask=False,
-    tile_size=None,
-    save_RAM=False,
+    tile_size=1024,
+    save_RAM=True,
     kwargs_tifffile=None,
 ):
     mosaics = normalize_mosaics(mosaics, tile_size)
