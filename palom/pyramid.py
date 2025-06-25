@@ -147,7 +147,7 @@ def write_pyramid(
 
     software = f"palom {_version}"
     pixel_size = pixel_size
-    metadata = {
+    ome_metadata = {
         "Creator": software,
         "Pixels": {
             "PhysicalSizeX": pixel_size,
@@ -161,7 +161,7 @@ def write_pyramid(
         num_channels_each_mosaic = [count_num_channels([m]) for m in mosaics]
         names = format_channel_names(num_channels_each_mosaic, channel_names)
         if len(names) == num_channels:
-            metadata.update(
+            ome_metadata.update(
                 {
                     "Channel": {"Name": names},
                 }
@@ -169,24 +169,29 @@ def write_pyramid(
 
     logger.info(f"Writing to {path}")
     with tifffile.TiffWriter(path, bigtiff=True) as tif:
-        kwargs = dict(
-            compression=compression,
-            resolutionunit="CENTIMETER",
-            dtype=dtype,
-        )
         if kwargs_tifffile is None:
             kwargs_tifffile = {}
+        kwargs = {
+            **{"software": software},
+            **kwargs_tifffile,
+            **dict(
+                compression=compression,
+                resolutionunit="CENTIMETER",
+                dtype=dtype,
+            ),
+        }
         tif.write(
-            metadata=metadata,
-            software=software,
+            metadata=ome_metadata,
             data=tile_from_combined_mosaics(
                 mosaics, tile_shape=tile_shapes[0], save_RAM=save_RAM
             ),
             shape=(num_channels, *shapes[0]),
             subifds=int(num_levels - 1),
-            resolution=(1e4 / pixel_size, 1e4 / pixel_size),
             tile=tile_shapes[0],
-            **{**kwargs, **kwargs_tifffile},
+            **{
+                **kwargs,
+                **{"resolution": (1e4 / pixel_size, 1e4 / pixel_size)},
+            },
         )
         tif.filehandle.flush()
         logger.info("Generating pyramid")
@@ -206,9 +211,11 @@ def write_pyramid(
                 ),
                 shape=(num_channels, *shape),
                 subfiletype=1,
-                resolution=(1e4 / mag / pixel_size, 1e4 / mag / pixel_size),
                 tile=tile_shape,
-                **{**kwargs, **kwargs_tifffile},
+                **{
+                    **kwargs,
+                    **{"resolution": (1e4 / mag / pixel_size, 1e4 / mag / pixel_size)},
+                },
             )
             tif.filehandle.flush()
 
