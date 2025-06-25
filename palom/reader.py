@@ -119,9 +119,9 @@ class OmePyramidReader(DaPyramidChannelReader):
             da_pyramid = []
             for z in zarr_pyramid:
                 if issubclass(type(z), zarr.hierarchy.Group):
-                    da_level = da.from_zarr(z[0])
+                    da_level = da.from_zarr(z[0], name=False)
                 else:
-                    da_level = da.from_zarr(z)
+                    da_level = da.from_zarr(z, name=False)
                 da_level = da_level.squeeze()
                 if da_level.ndim == 2:
                     da_level = da_level.reshape(1, *da_level.shape)
@@ -194,7 +194,7 @@ class SvsReader(DaPyramidChannelReader):
 
     def pyramid_from_svs(self) -> list[da.Array]:
         return [
-            da.from_zarr(self.store, component=d["path"])[..., :3]
+            da.from_zarr(self.store, component=d["path"], name=False)[..., :3]
             for d in self.zarr.attrs["multiscales"][0]["datasets"]
         ]
 
@@ -242,7 +242,7 @@ class VsiReader(DaPyramidChannelReader):
 
     def pyramid_from_vsi(self) -> list[da.Array]:
         return [
-            da.from_zarr(self.store, component=d["path"])
+            da.from_zarr(self.store, component=d["path"], name=False)
             for d in self.zarr.attrs["multiscales"][0]["datasets"]
         ]
 

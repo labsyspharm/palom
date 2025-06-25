@@ -266,7 +266,8 @@ def tile_from_pyramid(
         img = da.from_zarr(
             zarr.open(
                 tifffile.imread(path, series=0, level=level, aszarr=True), mode="r"
-            )
+            ),
+            name=False,
         )
         if img.ndim == 2:
             img = img.reshape(1, *img.shape)
