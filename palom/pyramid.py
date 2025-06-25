@@ -33,7 +33,7 @@ class PyramidSetting:
 
     def num_levels(self, base_shape):
         factor = max(base_shape) / self.max_pyramid_img_size
-        return math.ceil(math.log(factor, self.downscale_factor)) + 1
+        return max(math.ceil(math.log(factor, self.downscale_factor)) + 1, 1)
 
 
 def format_channel_names(num_channels_each_mosaic, channel_names):
