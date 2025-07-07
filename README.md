@@ -27,26 +27,13 @@ conda activate palom
 
 ### Step 2
 
-Install openslide in the conda environment.
+Install palom from PyPI in the activated conda environment. Using the [all]
+option will also install the `openslide` and `slideio` binaries, which are
+required for working with SVS and VSI files (from Leica and Olympus microscopes,
+respectively).
 
-- For MacOS, use conda-forge channel
-
-```
-conda install openslide -c conda-forge
-```
-
-- For Windows and Linux, use sdvillal channel
-
-```
-conda install openslide -c sdvillal
-```
-
-### Step 3
-
-Install palom from pypi in the conda environment.
-
-```
-python -m pip install palom
+```bash
+python -m pip install palom[all]
 ```
 
 ---
