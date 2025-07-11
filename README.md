@@ -165,6 +165,39 @@ Y:\DATA\SARDANA\MIHC\768473\RAW
             768473.ome.tif.log
 ```
 
+### Align whole-slide multiplexed IF images
+
+```bash
+palom-multicycle-tif --img_list '/path/cycle1.tif' '/path/to/cycle2.tif' '/path/to/cycle3.tif' --out_dir '/path/to/outdir' --out_name 'example.ome.tif'
+```
+
+Parameters:
+`--img_list`: provide a list of whole-slide images to be registered in `tif` or `tiff` format
+`--out_dir`: provide a path to the output directory
+`--out_name`: optional, provide output file name. If not provided, `-registered.ome.tif` will be appended to the stem of the second image path
+`--channel`: optional, channel to guide alignment. If not provided, default value 0
+`--px_size`: optional, physical pixel size of the image. The image metadata will be checked if not provided. If not found, value will be set to 1. 
+`--n_keypoints`: optional, number of keypoints to use for alignment. Default 10000.
+`--only_coarse`: bool, only run coarse alignment
+`--only_qc`: bool, only run quality control
+
+When the process is finished, a pyramidal OME-TIFF file will be generated along
+with PNG files showing the feature-based registration results.
+
+```
+/path/to/
+│   cycle1.tif
+│   cycle2.tif
+│   cycle3.tif
+│
+└───outdir
+    │   example.ome.tif
+    │
+    └───qc
+            '1-cycle2.ome.tif (block shift distance).png'
+            '1-cycle2.ome.tif (coarse alignment).jpg'
+```
+
 ---
 
 ## Scripting
