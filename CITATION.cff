@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Chen"
+  given-names: "Yu-An"
+  orcid: "https://orcid.org/0000-0001-7228-4696"
+- family-names: "Watson"
+  given-names: "Cameron"
+  orcid: "https://orcid.org/0000-0002-6942-2469"
+- family-names: "Beštak"
+  given-names: "Krešimir"
+  orcid: "https://orcid.org/0009-0009-8245-9846"
+title: "PALOM - Piecewise alignment for layers of mosaics"
+version: 2025.7.1
+doi: 10.5281/zenodo.17039346
+date-released: 2025-07-06
+url: "https://github.com/labsyspharm/palom"
+repository-code: "https://github.com/labsyspharm/palom"
+license: "MIT"

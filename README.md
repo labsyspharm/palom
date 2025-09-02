@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/423772731.svg)](https://doi.org/10.5281/zenodo.17039346)
+
 <h2>
     <img alt="palom" height="60" src="palom-logo.svg">
     <br>
