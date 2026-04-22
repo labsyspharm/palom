@@ -237,6 +237,8 @@ def get_reader(path):
         return palom.reader.SvsReader
     elif path.suffix == ".vsi":
         return palom.reader.VsiReader
+    elif path.suffix == ".qptiff":
+        return palom.reader.QptiffPyramidReader
     else:
         return palom.reader.OmePyramidReader
 

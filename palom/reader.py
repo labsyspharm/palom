@@ -213,6 +213,98 @@ class SvsReader(DaPyramidChannelReader):
             return self._pixel_size
 
 
+class QptiffPyramidReader(DaPyramidChannelReader):
+    def __init__(
+        self, path: str | pathlib.Path, pixel_size: float | None = None
+    ) -> None:
+        self.path = pathlib.Path(path)
+        self._pixel_size = pixel_size
+        pyramid, channel_names, detected_pixel_size = self._parse_qptiff(self.path)
+        self._channel_names = channel_names
+        if self._pixel_size is None and detected_pixel_size is not None:
+            logger.info(f"Detected pixel size: {detected_pixel_size:.4f} µm")
+            self._pixel_size = detected_pixel_size
+        super().__init__(pyramid, channel_axis=0)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["pyramid"]
+        state["path"] = state["path"].resolve()
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__init__(path=state["path"], pixel_size=state["_pixel_size"])
+
+    @staticmethod
+    def _parse_qptiff(
+        path: str | pathlib.Path,
+    ) -> tuple[list[da.Array], list[str], float | None]:
+        import xml.etree.ElementTree as ET
+
+        with tifffile.TiffFile(path) as tif:
+            # Series 0 is always the full-resolution (Baseline/FullResolution) series
+            series = tif.series[0]
+            pyramid_levels = series.levels
+
+            zarr_pyramid = [zarr.open(level.aszarr(), "r") for level in pyramid_levels]
+            da_pyramid = []
+            for z in zarr_pyramid:
+                if issubclass(type(z), zarr.hierarchy.Group):
+                    da_level = da.from_zarr(z[0], name=False)
+                else:
+                    da_level = da.from_zarr(z, name=False)
+                da_level = da_level.squeeze()
+                if da_level.ndim == 2:
+                    da_level = da_level.reshape(1, *da_level.shape)
+                da_pyramid.append(da_level)
+
+            # Each page in level 0 is one channel; parse Biomarker from its XML
+            channel_names = []
+            for page in pyramid_levels[0].pages:
+                desc_tag = page.tags.get("ImageDescription")
+                if desc_tag:
+                    root = ET.fromstring(desc_tag.value)
+                    name = root.findtext("Biomarker") or root.findtext("Name") or ""
+                    channel_names.append(name)
+                else:
+                    channel_names.append("")
+
+            # Pixel size from standard TIFF XResolution / ResolutionUnit tags
+            pixel_size: float | None = None
+            try:
+                page0 = pyramid_levels[0].pages[0]
+                xres_tag = page0.tags.get("XResolution")
+                resunit_tag = page0.tags.get("ResolutionUnit")
+                if xres_tag is not None and resunit_tag is not None:
+                    num, denom = xres_tag.value
+                    resunit = str(resunit_tag.value).upper()
+                    if num != 0:
+                        if "CENTIMETER" in resunit:
+                            pixel_size = denom / num * 1e4  # cm → µm
+                        elif "INCH" in resunit:
+                            pixel_size = denom / num * 25400  # inch → µm
+            except Exception:
+                pass
+
+        return da_pyramid, channel_names, pixel_size
+
+    @property
+    def pixel_size(self) -> float:
+        if self._pixel_size is not None:
+            return self._pixel_size
+        logger.warning(
+            f"Unable to parse pixel size from {self.path.name};"
+            f" assuming 1 µm. Use `_pixel_size` to set it manually"
+        )
+        self._pixel_size = 1
+        return self._pixel_size
+
+    @property
+    def channel_names(self) -> list[str]:
+        return self._channel_names
+
+
 class VsiReader(DaPyramidChannelReader):
     def __init__(
         self, path: str | pathlib.Path, scene: int = 0, pixel_size: float | None = None

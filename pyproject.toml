@@ -1,6 +1,6 @@
 [project]
 name = "palom"
-version = "2025.7.1"
+version = "2026.4.1"
 description = "Piecewise alignment for layers of mosaics"
 license = { text = "MIT" }
 authors = [{ name = "Yu-An Chen", email = "atwood12@gmail.com" }]
