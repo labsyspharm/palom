@@ -115,11 +115,11 @@ class OmePyramidReader(DaPyramidChannelReader):
                 pyramid = tif.series[0].levels
             elif num_series > 1:
                 pyramid = tif.series
-            zarr_pyramid = [zarr.open(level.aszarr(), "r") for level in pyramid]
+            zarr_pyramid = [zarr.open(level.aszarr(), mode="r") for level in pyramid]
             da_pyramid = []
             for z in zarr_pyramid:
-                if issubclass(type(z), zarr.hierarchy.Group):
-                    da_level = da.from_zarr(z[0], name=False)
+                if issubclass(type(z), zarr.Group):
+                    da_level = da.from_zarr(z[str(0)], name=False)
                 else:
                     da_level = da.from_zarr(z, name=False)
                 da_level = da_level.squeeze()
