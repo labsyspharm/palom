@@ -126,6 +126,7 @@ def compress_rgb(
     mpixels.channels[0].name = None
     mpixels.channels[0].samples_per_pixel = 3
     mpixels.tiff_data_blocks = [ome_types.model.TiffData(plane_count=1)]
+    mpixels.interleaved = True
     # Drop the optional PyramidResolution annotation rather than recompute it.
     metadata.structured_annotations = [
         a
