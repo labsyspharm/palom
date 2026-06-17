@@ -48,6 +48,7 @@ build-backend = "poetry.core.masonry.api"
 [project.scripts]
 palom-svs = "palom.cli.svs:main"
 palom-svs-helper = "palom.cli.helper:main"
+palom-multicycle-tif = "palom.cli.align_multiple_cycles:main"
 palom-align-he = "palom.cli.align_he:main"
 palom-pyramid = "palom.cli.pyramid_tools:main"
 palom-rgb-compress = "palom.cli.compress_rgb_jpeg:main"
