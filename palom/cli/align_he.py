@@ -25,6 +25,7 @@ def align_he(
     n_keypoints: int = 10_000,
     auto_mask: bool = True,
     thumbnail_max_size: int = 2000,
+    ref_block_size: int = None,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -62,6 +63,20 @@ def align_he(
 
     r1 = get_reader(p1)(p1, pixel_size=px_size1)
     r2 = get_reader(p2)(p2, pixel_size=px_size2)
+
+    if ref_block_size is not None:
+        # enlarge the refinement blocks by rechunking the reference pyramid's
+        # spatial axes; the moving image and MultiResAligner inherit this
+        # chunking. Larger blocks can stabilize shifts when small tiles lack
+        # features, at the cost of spatial resolution and memory per block.
+        r1.pyramid = [
+            level.rechunk({1: ref_block_size, 2: ref_block_size})
+            for level in r1.pyramid
+        ]
+    logger.info(
+        f"Reference refinement block size (`ref_block_size`={ref_block_size}):"
+        f" {r1.pyramid[0].chunksize[1:]} px at level 0"
+    )
 
     LEVEL1 = 0
     LEVEL2 = 0
