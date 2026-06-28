@@ -69,14 +69,38 @@ class DaPyramidChannelReader:
 
     @property
     def level_downsamples(self) -> dict[int, float]:
-        shapes = [ss.shape[1:3] for ss in self.pyramid]
-        shapes.insert(0, shapes[0])
-        # FIXME should use image-based registration to further refine the
-        # downsample factor between levels
-        downsamples = [
-            np.divide(s1, s2).mean() for s1, s2 in itertools.pairwise(shapes)
-        ]
-        return dict(enumerate(itertools.accumulate(downsamples, func=np.multiply)))
+        shapes = [np.array(ss.shape[1:3], dtype=float) for ss in self.pyramid]
+        # Per-step downscale factor between consecutive levels. The raw shape
+        # ratio only approximates the true factor because each level's
+        # dimensions are rounded -- up *or* down -- when shrunk (e.g. an odd
+        # 3671 px level halves to 1836 px, a ratio of 1.9995). If rounding the
+        # ratio to an integer reproduces the actual level shape to within a
+        # pixel on every axis, treat it as an exact integer downscale: this
+        # covers both floor- and ceil-built pyramids and stops the accumulated
+        # factor from drifting (128 instead of 127.86 by level 7). Otherwise
+        # keep the measured ratio, which preserves genuinely non-integer and
+        # non-constant (e.g. magnification-matched) factors.
+        #
+        # Caveat: integer rounding and a true non-integer factor cannot be told
+        # apart from shape alone at coarse levels, where a single pixel is a
+        # large fraction of the dimension; the test is reliable at fine levels
+        # where the shapes are large, which is what matters for registration.
+        # FIXME image-based registration would refine factors that aren't exact
+        # integers.
+        factors = [1.0]
+        for level, (prev, cur) in enumerate(itertools.pairwise(shapes), start=1):
+            ratio = float((prev / cur).mean())
+            factor = round(ratio)
+            if factor >= 1 and np.all(np.abs(prev / factor - cur) < 1):
+                factors.append(float(factor))
+            else:
+                logger.warning(
+                    f"level {level} has a non-integer downsample factor of"
+                    f" {ratio:.4f} relative to level {level - 1}; coarse"
+                    f" alignment may be slightly less accurate"
+                )
+                factors.append(ratio)
+        return dict(enumerate(itertools.accumulate(factors, func=np.multiply)))
 
     @property
     def pixel_dtype(self) -> np.dtype:

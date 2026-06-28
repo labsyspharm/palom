@@ -171,8 +171,11 @@ class MultiResAligner:
             for al in aligners
         ]
         h, w = aligners[0].grid_shape
+        # tile-repeat counts mapping each level's grid back onto the finest
+        # aligner level; these must be exact integers, so round (not truncate)
+        # to stay robust to any residual float drift in the downsample factors
         downsample_factors = [
-            int(dd / self.downsample_factors[0])
+            round(dd / self.downsample_factors[0])
             for dd in self.downsample_factors
         ]
         valid_masks = [
