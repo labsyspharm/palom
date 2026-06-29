@@ -44,9 +44,9 @@ class MultiObjAligner:
         self.thumbnail_channel2 = thumbnail_channel2 or channel2
         self.thumbnail_level1 = thumbnail_level1
 
-    def run(self, downscale_factor=8, exclude_objects=None, refine=True):
+    def run(self, downscale_factor=8, exclude_objects=None, refine=True, multi_res=True):
         self.segment_objects(downscale_factor=downscale_factor, plot_segmentation=True)
-        self.align_all_objects(plot_shift=True, refine=refine)
+        self.align_all_objects(plot_shift=True, refine=refine, multi_res=multi_res)
         self.combine_object_results(exclude_objects=exclude_objects)
 
     @cached_property
@@ -149,13 +149,29 @@ class MultiObjAligner:
         if plot_segmentation:
             self.plot_segmentation()
 
-    def object_block_mask(self, i, threshold=0.25):
-        """Boolean mask over the block grid for object `i`, from its segmentation
-        label (not its bounding box), so overlapping object bboxes don't collide."""
-        obj = (self.segmentation_mask == self._object_labels[i]).astype('float32')
-        nbi, nbj = self.aligner.grid_shape
-        grid = cv2.resize(obj, (nbj, nbi), interpolation=cv2.INTER_AREA)
-        return grid >= threshold
+    def object_block_mask(self, i, grid_shape=None, threshold=0.25):
+        """Boolean mask over a block grid for object `i`, from its segmentation
+        label (not its bounding box), so overlapping object bboxes don't collide.
+
+        `grid_shape` defaults to the finest (level1) grid; pass a coarser level's
+        `grid_shape` for the multi-res path. Always returns at least one True
+        block (falls back to the object's centroid block when the label fills
+        less than `threshold` of every block), so masked shift computation never
+        produces an all-infinite -- and thus crashing -- level.
+        """
+        if grid_shape is None:
+            grid_shape = self.aligner.grid_shape
+        nbi, nbj = grid_shape
+        obj = self.segmentation_mask == self._object_labels[i]
+        grid = cv2.resize(obj.astype('float32'), (nbj, nbi), interpolation=cv2.INTER_AREA)
+        mask = grid >= threshold
+        if not mask.any():
+            rr, cc = np.where(obj)
+            bi = min(int(rr.mean() / obj.shape[0] * nbi), nbi - 1)
+            bj = min(int(cc.mean() / obj.shape[1] * nbj), nbj - 1)
+            mask = np.zeros((nbi, nbj), dtype=bool)
+            mask[bi, bj] = True
+        return mask
 
     def plot_segmentation(self):
         import matplotlib.pyplot as plt
@@ -200,7 +216,7 @@ class MultiObjAligner:
             thumbnail_channel2=self.thumbnail_channel2,
         )
     
-    def align_object(self, i, plot_shifts=True, refine=True, **kwargs):
+    def align_object(self, i, plot_shifts=True, refine=True, multi_res=True, **kwargs):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = transform_bbox(
             self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix
@@ -233,13 +249,6 @@ class MultiObjAligner:
         # per-object block region from the segmentation label (not bbox), so
         # overlapping object bounding boxes don't cross-assign blocks
         block_mask = self.object_block_mask(i)
-        if not block_mask.any():
-            # object too small/thin to fill 25% of any block -- fall back to its
-            # bounding box so it still gets >=1 block (an empty mask would make
-            # every block shift `inf` and crash `constrain_shifts`)
-            rsf, ref_, csf, cef = self.bbox_ref_img_block[i]
-            block_mask = np.zeros(self.aligner.grid_shape, dtype=bool)
-            block_mask[rsf:ref_, csf:cef] = True
 
         if refine:
             refined = align_refine.refine_affine_by_block_translation(
@@ -252,23 +261,41 @@ class MultiObjAligner:
                     plt.gcf().suptitle(f"Object {i} (coarse affine refinement)")
 
         shift_mask = da.from_array(block_mask, chunks=1)
-        c21l.compute_shifts(mask=shift_mask)
+        if multi_res:
+            # coarse-to-fine block shifts within this object, using its refined
+            # affine as the baseline; the per-level mask follows the object
+            mr = align_multi_res.MultiResAligner(
+                self.reader1, self.reader2, level1=self.level1,
+                channel1=self.channel1, channel2=self.channel2,
+                thumbnail_channel1=self.thumbnail_channel1,
+                thumbnail_channel2=self.thumbnail_channel2,
+                thumbnail_level1=self.thumbnail_level1,
+            )
+            mr._coarse_affine_matrix = c21l.coarse_affine_matrix
+            mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
+            mr.constrain_shifts()
+            block_aligner = mr.base_aligner
+        else:
+            c21l.compute_shifts(mask=shift_mask)
+            c21l.constrain_shifts()
+            block_aligner = c21l
         if plot_shifts:
             try:
-                c21l.plot_shifts()
+                block_aligner.plot_shifts()
                 import matplotlib.pyplot as plt
                 plt.gcf().suptitle(f"Object {i} (block shifts)")
             except Exception as e:
                 print(f'\nFailed plotting shifts for object: {i}\n')
                 print(e)
-        c21l.constrain_shifts()
-        return (c21l.shifts, c21l.block_affine_matrices, shift_mask)
+        return (block_aligner.shifts, block_aligner.block_affine_matrices, shift_mask)
 
-    def align_all_objects(self, plot_shift=True, refine=True):
+    def align_all_objects(self, plot_shift=True, refine=True, multi_res=True):
         block_mxs = []
         shift_masks = []
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
-            _, mx, mask = self.align_object(idx, plot_shifts=plot_shift, refine=refine)
+            _, mx, mask = self.align_object(
+                idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res
+            )
             block_mxs.append(mx)
             shift_masks.append(mask)
         self.block_mxs = np.array(block_mxs)
