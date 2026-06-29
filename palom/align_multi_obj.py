@@ -1,12 +1,13 @@
 import itertools
 from functools import cached_property
 
+import cv2
 import dask.array as da
 import numpy as np
 import skimage.measure
 import skimage.transform
 
-from palom import align, align_multi_res, img_util
+from . import align, align_multi_res, align_refine, img_util
 
 
 def transform_bbox(bbox, affine_mx):
@@ -43,9 +44,9 @@ class MultiObjAligner:
         self.thumbnail_channel2 = thumbnail_channel2 or channel2
         self.thumbnail_level1 = thumbnail_level1
 
-    def run(self, downscale_factor=8, exclude_objects=None):
+    def run(self, downscale_factor=8, exclude_objects=None, refine=True):
         self.segment_objects(downscale_factor=downscale_factor, plot_segmentation=True)
-        self.align_all_objects(plot_shift=True)
+        self.align_all_objects(plot_shift=True, refine=refine)
         self.combine_object_results(exclude_objects=exclude_objects)
 
     @cached_property
@@ -115,29 +116,46 @@ class MultiObjAligner:
         self._coarse_affine_matrix = c21l.coarse_affine_matrix
         self._affine_matrix = c21l.affine_matrix
 
-    def segment_objects(self, downscale_factor=8, plot_segmentation=False):
+    def segment_objects(self, downscale_factor=8, min_area=None, plot_segmentation=False):
         shape = self.ref_thumbnail.shape
         mask = img_util.entropy_mask(
             img_util.cv2_downscale_local_mean(
                 self.ref_thumbnail, downscale_factor
             )
         )
+        labeled = skimage.morphology.label(mask)
         regionprops = skimage.measure.regionprops_table(
-            skimage.morphology.label(mask),
-            properties=['bbox', 'area']
+            labeled, properties=['label', 'bbox', 'area']
         )
+        area = np.array(regionprops['area'])
+        # drop specks/debris; default threshold is 1% of the largest object
+        if min_area is None:
+            min_area = 0.01 * area.max() if area.size else 0
+        keep = area >= min_area
+        order = np.argsort(area[keep])[::-1]  # largest object first
         bbox_ref_thumbnail = downscale_factor * np.array([
             regionprops['bbox-0'],
             regionprops['bbox-2'],
             regionprops['bbox-1'],
             regionprops['bbox-3']
         ]).T
-        self._bbox_ref_thumbnail = bbox_ref_thumbnail[np.argsort(regionprops['area'])[::-1]]
+        self._bbox_ref_thumbnail = bbox_ref_thumbnail[keep][order]
+        # label value of each (sorted) object, so per-object masks can be read
+        # back from `segmentation_mask` (which keeps the original label values)
+        self._object_labels = np.array(regionprops['label'])[keep][order]
         self.segmentation_mask = img_util.repeat_2d(
-            skimage.morphology.label(mask), (downscale_factor, downscale_factor)
+            labeled, (downscale_factor, downscale_factor)
         )[:shape[0], :shape[1]]
         if plot_segmentation:
             self.plot_segmentation()
+
+    def object_block_mask(self, i, threshold=0.25):
+        """Boolean mask over the block grid for object `i`, from its segmentation
+        label (not its bounding box), so overlapping object bboxes don't collide."""
+        obj = (self.segmentation_mask == self._object_labels[i]).astype('float32')
+        nbi, nbj = self.aligner.grid_shape
+        grid = cv2.resize(obj, (nbj, nbi), interpolation=cv2.INTER_AREA)
+        return grid >= threshold
 
     def plot_segmentation(self):
         import matplotlib.pyplot as plt
@@ -182,7 +200,7 @@ class MultiObjAligner:
             thumbnail_channel2=self.thumbnail_channel2,
         )
     
-    def align_object(self, i, plot_shifts=True, **kwargs):
+    def align_object(self, i, plot_shifts=True, refine=True, **kwargs):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = transform_bbox(
             self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix
@@ -212,10 +230,28 @@ class MultiObjAligner:
             import matplotlib.pyplot as plt
             plt.gcf().suptitle(f"Object {i} (coarse alignment)")
 
-        rsf, ref, csf, cef = self.bbox_ref_img_block[i]
-        shift_mask = da.zeros(c21l.grid_shape, dtype=bool, chunks=1)
-        shift_mask[rsf:ref, csf:cef] = True
+        # per-object block region from the segmentation label (not bbox), so
+        # overlapping object bounding boxes don't cross-assign blocks
+        block_mask = self.object_block_mask(i)
+        if not block_mask.any():
+            # object too small/thin to fill 25% of any block -- fall back to its
+            # bounding box so it still gets >=1 block (an empty mask would make
+            # every block shift `inf` and crash `constrain_shifts`)
+            rsf, ref_, csf, cef = self.bbox_ref_img_block[i]
+            block_mask = np.zeros(self.aligner.grid_shape, dtype=bool)
+            block_mask[rsf:ref_, csf:cef] = True
 
+        if refine:
+            refined = align_refine.refine_affine_by_block_translation(
+                c21l, block_mask=block_mask, plot=plot_shifts
+            )
+            if refined is not None:
+                c21l.coarse_affine_matrix = refined
+                if plot_shifts:
+                    import matplotlib.pyplot as plt
+                    plt.gcf().suptitle(f"Object {i} (coarse affine refinement)")
+
+        shift_mask = da.from_array(block_mask, chunks=1)
         c21l.compute_shifts(mask=shift_mask)
         if plot_shifts:
             try:
@@ -227,12 +263,12 @@ class MultiObjAligner:
                 print(e)
         c21l.constrain_shifts()
         return (c21l.shifts, c21l.block_affine_matrices, shift_mask)
-    
-    def align_all_objects(self, plot_shift=True):
+
+    def align_all_objects(self, plot_shift=True, refine=True):
         block_mxs = []
         shift_masks = []
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
-            _, mx, mask = self.align_object(idx, plot_shifts=plot_shift)
+            _, mx, mask = self.align_object(idx, plot_shifts=plot_shift, refine=refine)
             block_mxs.append(mx)
             shift_masks.append(mask)
         self.block_mxs = np.array(block_mxs)
