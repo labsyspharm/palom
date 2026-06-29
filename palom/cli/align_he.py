@@ -26,6 +26,7 @@ def align_he(
     auto_mask: bool = True,
     thumbnail_max_size: int = 2000,
     ref_block_size: int = None,
+    refine_coarse_affine: bool = False,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -109,6 +110,14 @@ def align_he(
     # use 0.5 inch on the top for figure title
     fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
+
+    if refine_coarse_affine:
+        refined = palom.align_refine.refine_affine_by_block_translation(aligner)
+        if refined is not None:
+            aligner.coarse_affine_matrix = refined
+            fig = plt.gcf()
+            fig.suptitle(f"{p2.name} (coarse affine refinement)", fontsize=8)
+            save_all_figs(out_dir=out_dir / "qc", format="png", dpi=144)
 
     if viz_coarse_napari:
         _ = viz_coarse(
