@@ -238,6 +238,11 @@ class MultiResAligner:
         shift_mask = np.all(np.isfinite(shift_mask), axis=0)
         mask = np.max(self.valid_masks, axis=0) & shift_mask
 
+        # masked (multi-object) runs leave inf outside the object; zero them so
+        # the color conversion below stays finite (the region is hidden by
+        # `mask`/alpha anyway). No-op for full-grid single-object runs.
+        shifts = np.where(np.isfinite(shifts), shifts, 0.0)
+
         if max_radius is None:
             max_radius = np.percentile(np.linalg.norm(shifts, axis=0)[mask], 99.5)
 

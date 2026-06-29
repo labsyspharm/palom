@@ -275,13 +275,17 @@ class MultiObjAligner:
             mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
             mr.constrain_shifts()
             block_aligner = mr.base_aligner
+            # QC: show the multi-res per-level selection (not just the combined
+            # field) for this object
+            shift_plotter = mr
         else:
             c21l.compute_shifts(mask=shift_mask)
             c21l.constrain_shifts()
             block_aligner = c21l
+            shift_plotter = c21l
         if plot_shifts:
             try:
-                block_aligner.plot_shifts()
+                shift_plotter.plot_shifts()
                 import matplotlib.pyplot as plt
                 plt.gcf().suptitle(f"Object {i} (block shifts)")
             except Exception as e:
