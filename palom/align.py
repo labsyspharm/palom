@@ -54,12 +54,19 @@ def block_shifts(ref_img, moving_img, mask=True, pcc_kwargs=None):
 def constrain_block_shifts(shifts, grid_shape):
     distances = np.linalg.norm(shifts, axis=1)
     is_finite = np.isfinite(distances)
+    finite_distances = distances[is_finite]
+    # Not enough finite shifts, or no spread among them (e.g. a masked region
+    # with very few valid blocks, or blocks that all returned the same shift):
+    # there is no trend to fit and `threshold_triangle` would choke on a
+    # degenerate histogram, so leave the shifts as-is.
+    if finite_distances.size < 3 or np.ptp(finite_distances) == 0:
+        return shifts
     # exclude np.inf when computing threshold
-    threshold_distance = skimage.filters.threshold_triangle(
-        distances[is_finite]
-    )
+    threshold_distance = skimage.filters.threshold_triangle(finite_distances)
 
     high_confidence_blocks = distances < threshold_distance
+    if high_confidence_blocks.sum() < 3:
+        return shifts
 
     lr = sklearn.linear_model.LinearRegression()
     block_coords = np.indices(grid_shape).reshape(2, -1).T
@@ -70,10 +77,13 @@ def constrain_block_shifts(shifts, grid_shape):
     predicted_shifts = lr.predict(block_coords)
     diffs = shifts - predicted_shifts
     distance_diffs = np.linalg.norm(diffs, axis=1)
+    finite_diffs = distance_diffs[is_finite]
+    if np.ptp(finite_diffs) == 0:
+        return shifts
     passed = (
         distance_diffs <
         # exclude np.inf when computing threshold
-        skimage.filters.threshold_triangle(distance_diffs[is_finite])
+        skimage.filters.threshold_triangle(finite_diffs)
     )
     fitted_shifts = shifts.copy()
     fitted_shifts[~passed] = predicted_shifts[~passed]

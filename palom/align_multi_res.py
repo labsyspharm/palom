@@ -1,3 +1,4 @@
+import dask.array as da
 import numpy as np
 
 from . import align
@@ -153,11 +154,21 @@ class MultiResAligner:
         aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
         self._coarse_affine_matrix = aligner.coarse_affine_matrix
 
-    def align(self):
+    def align(self, mask_fn=None):
+        # `mask_fn(grid_shape) -> bool array` optionally restricts block-shift
+        # computation to a region (e.g. one tissue object) at each level; it
+        # must return a non-empty mask for every level so each aligner keeps
+        # at least one finite block (an all-False mask crashes constrain).
         self._aligner_shifts = []
         for aligner in self.aligners:
             aligner.coarse_affine_matrix = self.coarse_affine_matrix
-            aligner.compute_shifts()
+            if mask_fn is None:
+                aligner.compute_shifts()
+            else:
+                mask = da.from_array(
+                    np.asarray(mask_fn(aligner.grid_shape), dtype=bool), chunks=1
+                )
+                aligner.compute_shifts(mask=mask)
             self._aligner_shifts.append(aligner.shifts)
 
     def constrain_shifts(self, exclude_result_levels=None):
@@ -167,7 +178,11 @@ class MultiResAligner:
             if not hasattr(aligner, 'original_shifts'):
                 aligner.constrain_shifts()
         _valid_masks = [
+            # a block is valid where constrain left it unchanged AND it is
+            # finite -- masked-out / unconstrained blocks are inf and must not
+            # win the cross-level argmax below
             np.all(al.original_shifts == al.shifts, axis=1)
+            & np.all(np.isfinite(al.shifts), axis=1)
             for al in aligners
         ]
         h, w = aligners[0].grid_shape
