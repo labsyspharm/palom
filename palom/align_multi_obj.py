@@ -5,6 +5,7 @@ import cv2
 import dask.array as da
 import numpy as np
 import skimage.measure
+import skimage.segmentation
 import skimage.transform
 
 from . import align, align_multi_res, align_refine, img_util, register_dev
@@ -128,6 +129,8 @@ class MultiObjAligner:
             )
         )
         labeled = skimage.morphology.label(mask)
+        labeled = skimage.segmentation.expand_labels(labeled, 4)
+
         regionprops = skimage.measure.regionprops_table(
             labeled, properties=['label', 'bbox', 'area']
         )
@@ -181,7 +184,6 @@ class MultiObjAligner:
         import matplotlib.pyplot as plt
         import matplotlib.patches
         import matplotlib.cm
-        import skimage.segmentation
         colors = matplotlib.cm.Set3.colors
         fig, (ax1, ax2) = plt.subplots(1, 2)
         def _proc_img(img):
