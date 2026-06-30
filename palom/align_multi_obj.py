@@ -44,9 +44,13 @@ class MultiObjAligner:
         self.thumbnail_channel2 = thumbnail_channel2 or channel2
         self.thumbnail_level1 = thumbnail_level1
 
-    def run(self, downscale_factor=8, exclude_objects=None, refine=True, multi_res=True):
+    def run(self, downscale_factor=8, exclude_objects=None, refine=True,
+            multi_res=True, min_num_blocks=25):
         self.segment_objects(downscale_factor=downscale_factor, plot_segmentation=True)
-        self.align_all_objects(plot_shift=True, refine=refine, multi_res=multi_res)
+        self.align_all_objects(
+            plot_shift=True, refine=refine, multi_res=multi_res,
+            min_num_blocks=min_num_blocks,
+        )
         self.combine_object_results(exclude_objects=exclude_objects)
 
     @cached_property
@@ -216,7 +220,8 @@ class MultiObjAligner:
             thumbnail_channel2=self.thumbnail_channel2,
         )
     
-    def align_object(self, i, plot_shifts=True, refine=True, multi_res=True, **kwargs):
+    def align_object(self, i, plot_shifts=True, refine=True, multi_res=True,
+                     min_num_blocks=25, **kwargs):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = transform_bbox(
             self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix
@@ -274,6 +279,10 @@ class MultiObjAligner:
                 thumbnail_channel1=self.thumbnail_channel1,
                 thumbnail_channel2=self.thumbnail_channel2,
                 thumbnail_level1=self.thumbnail_level1,
+                # match the standalone `multi_res` path so both use the same
+                # number of pyramid levels (the class default of 4 would add
+                # coarser levels)
+                min_num_blocks=min_num_blocks,
             )
             mr._coarse_affine_matrix = c21l.coarse_affine_matrix
             mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
@@ -297,12 +306,14 @@ class MultiObjAligner:
                 print(e)
         return (block_aligner.shifts, block_aligner.block_affine_matrices, shift_mask)
 
-    def align_all_objects(self, plot_shift=True, refine=True, multi_res=True):
+    def align_all_objects(self, plot_shift=True, refine=True, multi_res=True,
+                          min_num_blocks=25):
         block_mxs = []
         shift_masks = []
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
             _, mx, mask = self.align_object(
-                idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res
+                idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
+                min_num_blocks=min_num_blocks,
             )
             block_mxs.append(mx)
             shift_masks.append(mask)
