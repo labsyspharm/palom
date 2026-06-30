@@ -7,7 +7,7 @@ import numpy as np
 import skimage.measure
 import skimage.transform
 
-from . import align, align_multi_res, align_refine, img_util
+from . import align, align_multi_res, align_refine, img_util, register_dev
 
 
 def transform_bbox(bbox, affine_mx):
@@ -231,17 +231,21 @@ class MultiObjAligner:
         c21l = self.make_aligner()
         c21l.ref_thumbnail = masked_t_ref
         c21l.moving_thumbnail = masked_t_moving
-        # FIXME image flipping should have been detected at this point
+        # use the same coarse method as the CLI's first step
+        # (`register_dev.search_then_register`); flip/intensity-invert and the
+        # reference-order search are handled internally, so no explicit
+        # `test_flip`/`test_intensity_invert` is needed here
         default_kwargs = {
             'n_keypoints': 10_000,
             'plot_match_result': True,
-            'test_flip': True,
-            'test_intensity_invert': True,
-            'auto_mask': True
+            'auto_mask': True,
         }
-        c21l.coarse_register_affine(
+        _mx = register_dev.search_then_register(
+            np.asarray(masked_t_ref),
+            np.asarray(masked_t_moving),
             **{**default_kwargs, **kwargs}
         )
+        c21l.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
         if plot_shifts:
             import matplotlib.pyplot as plt
             plt.gcf().suptitle(f"Object {i} (coarse alignment)")
