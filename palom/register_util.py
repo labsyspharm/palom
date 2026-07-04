@@ -143,3 +143,28 @@ def get_rot90_mx(img_shape, k):
         rotation=np.deg2rad(degree),
         translation=translation[k]
     ).params
+
+
+def translate_mx(tx, ty):
+    return np.array([[1, 0, tx], [0, 1, ty], [0, 0, 1]], dtype=float)
+
+
+def score_overlap(ref, moving, mx, sigma=1.0):
+    """Whitened-intensity correlation between `ref` and `moving` warped by `mx`
+    (mov -> ref), over their overlap. Sign-tolerant (abs) for cross-modality.
+    A modality-robust coarse-alignment confidence metric shared by the feature-based
+    and Fourier-Mellin coarse routes."""
+    warped = skimage.transform.warp(
+        moving,
+        skimage.transform.AffineTransform(matrix=mx).inverse,
+        output_shape=ref.shape,
+        preserve_range=True,
+    ).astype("float32")
+    mask = warped != 0
+    if mask.sum() < 0.02 * mask.size:
+        return -np.inf
+    rw = img_util.whiten(ref, sigma)[mask]
+    ww = img_util.whiten(warped, sigma)[mask]
+    if rw.std() == 0 or ww.std() == 0:
+        return -np.inf
+    return float(abs(np.corrcoef(rw, ww)[0, 1]))
