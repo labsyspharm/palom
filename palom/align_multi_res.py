@@ -217,6 +217,13 @@ class MultiResAligner:
             out[np.array([mask == ii]*2)] = (
                 dd * aa.shifts[idx[mask == ii]].T.flatten()
             )
+        # Block shifts are residuals on top of the affine, so `shift == 0` means
+        # "defer to the affine". Residual inf only survives at outside-object
+        # blocks of a degenerate object (level-0 constrain early-returned); zero
+        # them so the field is finite by contract -- inside-object blocks are
+        # always finite -- and downstream warps don't hit inf * 0 = NaN or bleed
+        # inf through cv2 interpolation at the object boundary.
+        out = np.where(np.isfinite(out), out, 0.0)
         self.shifts = out.reshape(2, -1).T
         self.valid_masks = valid_masks
         self.idxs = idxs
@@ -224,6 +231,7 @@ class MultiResAligner:
     def plot_shifts(self, max_radius=None):
         import matplotlib.pyplot as plt
         import matplotlib.figure
+        import matplotlib.colors
         import skimage.color
         from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -232,16 +240,10 @@ class MultiResAligner:
         shape = self.base_aligner.grid_shape
         shifts = self.shifts.T.reshape(2, *shape)
 
-        shift_mask = shifts
-        if hasattr(self.base_aligner, 'original_shifts'):
-            shift_mask = self.base_aligner.original_shifts.T.reshape(2, *shape)
-        shift_mask = np.all(np.isfinite(shift_mask), axis=0)
-        mask = np.max(self.valid_masks, axis=0) & shift_mask
-
-        # masked (multi-object) runs leave inf outside the object; zero them so
-        # the color conversion below stays finite (the region is hidden by
-        # `mask`/alpha anyway). No-op for full-grid single-object runs.
-        shifts = np.where(np.isfinite(shifts), shifts, 0.0)
+        # `valid_masks` already encodes finiteness (constrain's isfinite guard)
+        # and `self.shifts` is finite by contract, so the valid region is exactly
+        # where any level won.
+        mask = np.max(self.valid_masks, axis=0)
 
         if max_radius is None:
             max_radius = np.percentile(np.linalg.norm(shifts, axis=0)[mask], 99.5)
@@ -276,14 +278,23 @@ class MultiResAligner:
 
         ax2 = fig.add_subplot(gs[2], sharex=ax1, sharey=ax1)
         ax2.imshow(np.log1p(thumbnail), alpha=1, extent=thumbnail_extent, cmap='gray')
+        # Use the first N of Set3's 12 fixed colors so a given level keeps the
+        # same color regardless of total level count, while the colorbar only
+        # spans the levels that actually exist (argmax indexes 0..N-1).
+        n_masks = len(self.valid_masks)
+        cmap = matplotlib.colors.ListedColormap(
+            matplotlib.colormaps['Set3'].colors[:n_masks]
+        )
         im = ax2.imshow(
             np.argmax(self.valid_masks, axis=0),
-            extent=flow_extent, alpha=0.5,
-            cmap='Set3', vmin=-.5, vmax=12-.5,
+            extent=flow_extent, alpha=0.5 * mask,
+            cmap=cmap, vmin=-.5, vmax=n_masks-.5,
         )
         divider = make_axes_locatable(ax2)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        plt.colorbar(im, cax=cax, ticks=self.levels, values=self.levels)
+
+        cbar = plt.colorbar(im, cax=cax, ticks=range(len(self.valid_masks)))
+        cbar.set_ticklabels(self.levels)
 
         _ = flow.plot_legend(
             np.array([*shifts, mask]),
