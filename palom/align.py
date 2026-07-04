@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import dask.array as da
 import skimage.exposure
@@ -292,16 +293,31 @@ def get_aligner(
     level1=0, level2=0,
     channel1=0, channel2=0,
     thumbnail_level1=-1, thumbnail_level2=-1,
-    thumbnail_channel1=None, thumbnail_channel2=None
+    thumbnail_channel1=None, thumbnail_channel2=None,
+    thumbnails_pixel_size=None,
 ):
+    thumbnail_channel1 = thumbnail_channel1 or channel1
+    thumbnail_channel2 = thumbnail_channel2 or channel2
     if None in [thumbnail_level1, thumbnail_level2]:
+        px = thumbnails_pixel_size
+        if px is not None:
+            thumbnail1 = make_thumbnail_at_px_size(reader1, px, thumbnail_channel1)
+            thumbnail2 = make_thumbnail_at_px_size(reader2, px, thumbnail_channel2)
+
+            return Aligner(
+                reader1.read_level_channels(level1, channel1),
+                reader2.read_level_channels(level2, channel2),
+                thumbnail1,
+                thumbnail2,
+                px / reader1.pixel_size / reader1.level_downsamples[level1],
+                px / reader2.pixel_size / reader2.level_downsamples[level2],
+            )
+
         thumbnail_level1, thumbnail_level2 = match_thumbnail_level(
             [reader1, reader2]
         )
     if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
     if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
-    thumbnail_channel1 = thumbnail_channel1 or channel1
-    thumbnail_channel2 = thumbnail_channel2 or channel2
     return Aligner(
         reader1.read_level_channels(level1, channel1), 
         reader2.read_level_channels(level2, channel2),
@@ -328,3 +344,42 @@ def match_thumbnail_level(readers):
         for ps, lps in zip(px_sizes, level_px_sizes)
     ]
     return target_levels
+
+
+def make_thumbnail_at_px_size(reader, px_size, channel):
+    px = reader.pixel_size
+    levels = sorted(reader.level_downsamples.keys())
+    px_sizes = px * np.array([reader.level_downsamples[ll] for ll in levels])
+
+    # pick the finest pyramid level whose pixel size is still <= the target, so we
+    # only ever downsample to reach `px_size` (never upsample); if the target is
+    # coarser than every level, use the coarsest level
+    coarser = px_sizes > px_size
+    if not coarser.any():
+        level = len(px_sizes) - 1
+    else:
+        level = int(np.argmax(coarser))
+        if level > 0:
+            level -= 1
+
+    factor = px_sizes[level] / px_size
+
+    if factor > 1:
+        logger.warning(
+            f"Requested thumbnail pixel size {px_size:g} µm is finer than the"
+            f" finest available level ({px_sizes[level]:g} µm); upsampling"
+            f" {factor:.2f}x."
+        )
+
+    ori = reader.read_level_channels(level, channel)
+
+    if max(ori.shape) > 20000:
+        logger.warning(
+            f"Reading level {level} at shape {tuple(ori.shape)} (> 20000 px) to build"
+            f" a {px_size:g} µm thumbnail; this may be slow or memory-heavy."
+        )
+
+    ori = np.asarray(ori)
+    return cv2.resize(
+        ori, dsize=None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA
+    )

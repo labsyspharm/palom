@@ -25,6 +25,7 @@ def align_he(
     n_keypoints: int = 10_000,
     auto_mask: bool = True,
     thumbnail_max_size: int = 2000,
+    thumbnail_pixel_size: float = 10,
     ref_block_size: int = None,
     refine_coarse_affine: bool = False,
     only_coarse: bool = False,
@@ -92,23 +93,34 @@ def align_he(
         thumbnail_level1=None,
         thumbnail_channel1=thumbnail_channel1,
         thumbnail_channel2=thumbnail_channel2,
+        thumbnails_pixel_size=thumbnail_pixel_size,
     )
-    _mx = palom.register_dev.search_then_register(
+    # thumbnail pixel sizes (level 0 px size x thumbnail level downsample); used by
+    # coarse_register to compute the small-portion overlap fraction and tile size
+    thumb_px1 = r1.pixel_size * aligner.ref_thumbnail_down_factor
+    thumb_px2 = r2.pixel_size * aligner.moving_thumbnail_down_factor
+    _mx = palom.register_dev.coarse_register(
         np.asarray(aligner.ref_thumbnail),
         np.asarray(aligner.moving_thumbnail),
+        pixel_size_left=thumb_px1,
+        pixel_size_right=thumb_px2,
         n_keypoints=n_keypoints,
         auto_mask=auto_mask,
         max_size=thumbnail_max_size,
+        plot_match_result=True,
     )
     aligner.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
-    fig, ax = plt.gcf(), plt.gca()
+    fig = plt.gcf()
     fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
-    ax.set_title(f"{p1.name} - {p2.name}", fontsize=6)
-    im_h, im_w = ax.images[0].get_array().shape
-    set_subplot_size(im_w / 288, im_h / 288, ax=ax)
-    ax.set_anchor("N")
-    # use 0.5 inch on the top for figure title
-    fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
+    ax = fig.axes[0]  # feature-match axes (first for both the whole-image and
+    ax.set_title(f"{p1.name} - {p2.name}", fontsize=6)  # windowed routes)
+    if len(fig.axes) == 1:
+        # whole-image single-panel plot: size the subplot to the match image
+        im_h, im_w = ax.images[0].get_array().shape
+        set_subplot_size(im_w / 288, im_h / 288, ax=ax)
+        ax.set_anchor("N")
+        # use 0.5 inch on the top for figure title
+        fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
 
     if refine_coarse_affine:
