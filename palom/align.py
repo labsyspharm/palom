@@ -196,6 +196,47 @@ def _displacement_remap_block(
     return _remap_crop(src_array, map_y, map_x, cval, module=module, order=order)
 
 
+def _multiobj_displacement_block(
+    _template, src_array=None, label_to_obj=None, base_inv_affine=None,
+    label_mask=None, mask_scale=1.0, out_shape=None, cval=0.0,
+    module="skimage", order=1, field_interp=cv2.INTER_LINEAR, block_info=None,
+):
+    """One output chunk of a multi-object displacement warp.
+
+    Each pixel is owned by exactly one object according to the (reference
+    space) labeled `label_mask`; that object's own affine + smoothed
+    displacement field warps it. Pixels whose label has no object (background
+    or excluded objects) fall back to the baseline affine. Only the objects
+    whose labels appear in this chunk are warped, so interior chunks cost a
+    single remap.
+    """
+    (r0, r1), (c0, c1) = block_info[None]["array-location"]
+    h, w = r1 - r0, c1 - c0
+    rows = np.arange(r0, r1, dtype="float32")
+    cols = np.arange(c0, c1, dtype="float32")
+
+    # per-pixel ownership: nearest sample of the labeled mask, which lives at
+    # `mask_scale`x coarser (reference-thumbnail) resolution
+    mr = np.clip((np.arange(r0, r1) / mask_scale).astype(int), 0, label_mask.shape[0] - 1)
+    mc = np.clip((np.arange(c0, c1) / mask_scale).astype(int), 0, label_mask.shape[1] - 1)
+    chunk_labels = label_mask[np.ix_(mr, mc)]
+
+    result = np.full((h, w), cval, dtype=src_array.dtype)
+    zeros = np.zeros((h, w), dtype="float32")
+    for lbl in np.unique(chunk_labels):
+        sel = chunk_labels == lbl
+        obj = None if label_to_obj is None else label_to_obj.get(int(lbl))
+        if obj is None:
+            inv_affine, dy, dx = base_inv_affine, zeros, zeros
+        else:
+            inv_affine, grid = obj
+            dy, dx = _sample_displacement(rows, cols, grid, out_shape, field_interp)
+        map_y, map_x = _ref_to_moving_coords(rows, cols, dy, dx, inv_affine)
+        warped = _remap_crop(src_array, map_y, map_x, cval, module=module, order=order)
+        result[sel] = warped[sel]
+    return result
+
+
 def _pc(img1, img2, mask, **pcc_kwargs):
     if not np.all(mask):
         return (np.inf, np.inf), np.inf

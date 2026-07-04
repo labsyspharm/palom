@@ -156,7 +156,7 @@ class MultiObjAligner:
         if plot_segmentation:
             self.plot_segmentation()
 
-    def object_block_mask(self, i, grid_shape=None, threshold=0.25):
+    def object_block_mask(self, i, grid_shape=None, threshold=1.0 / 16):
         """Boolean mask over a block grid for object `i`, from its segmentation
         label (not its bounding box), so overlapping object bboxes don't collide.
 
@@ -306,21 +306,32 @@ class MultiObjAligner:
             except Exception as e:
                 print(f'\nFailed plotting shifts for object: {i}\n')
                 print(e)
-        return (block_aligner.shifts, block_aligner.block_affine_matrices, shift_mask)
+        return (
+            block_aligner.affine_matrix, block_aligner.shifts,
+            block_aligner.block_affine_matrices, shift_mask,
+        )
 
     def align_all_objects(self, plot_shift=True, refine=True, multi_res=True,
                           min_num_blocks=25):
         block_mxs = []
         shift_masks = []
+        object_affines = []
+        object_shifts = []
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
-            _, mx, mask = self.align_object(
+            affine, shifts, mx, mask = self.align_object(
                 idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
                 min_num_blocks=min_num_blocks,
             )
+            object_affines.append(affine)
+            object_shifts.append(shifts)
             block_mxs.append(mx)
             shift_masks.append(mask)
         self.block_mxs = np.array(block_mxs)
         self.shift_masks = np.array(shift_masks)
+        # per-object (global affine, per-block shift field) kept separately so
+        # the displacement-field warp can build one continuous field per object
+        self.object_affines = np.array(object_affines)
+        self.object_shifts = np.array(object_shifts)
 
     def combine_object_results(self, exclude_objects=None):
         to_include = np.ones(len(self.shift_masks), dtype=bool)
@@ -343,3 +354,93 @@ class MultiObjAligner:
         self.block_affine_matrices_da = align.block_affine_matrices_da(
             mxs_final, self.aligner.grid_shape
         )
+
+    def displacement_transformed_moving_img(
+        self, moving_img, sigma_blocks=0.0, field_order=1, is_mask=False,
+        cval=0.0, exclude_objects=None, interpolation="skimage",
+    ):
+        """Seam-free, mask-constrained multi-object warp.
+
+        Each object is warped by its own affine plus a continuous displacement
+        field (its per-block shifts interpolated and smoothed *within the
+        object's mask* via normalized convolution, so the smoothing never
+        bleeds across the object boundary). The labeled `segmentation_mask`
+        assigns every output pixel to exactly one object at full resolution, so
+        intra-object block cracks disappear while genuine inter-object
+        discontinuities are preserved. Background (and excluded objects) fall
+        back to the baseline affine.
+
+        `sigma_blocks` controls how gradually each object's displacement blends
+        between its blocks (in block units); see
+        `align.block_displacement_transformed_moving_img`.
+        """
+        import scipy.ndimage as ndi
+
+        c21l = self.aligner
+        ref_img = c21l.ref_img
+        out_shape = tuple(int(s) for s in ref_img.shape[-2:])
+        cy, cx = ref_img.chunksize[-2:]
+        grid_shape = c21l.grid_shape
+        # output (level1) pixels per labeled-mask (ref-thumbnail) pixel
+        mask_scale = float(c21l.ref_thumbnail_down_factor)
+
+        exclude = set(exclude_objects or [])
+        base_inv_affine = np.linalg.inv(
+            np.asarray(self.baseline_affine_matrix, dtype="float64")
+        )
+
+        label_to_obj = {}
+        for i, label in enumerate(self._object_labels):
+            if i in exclude:
+                continue
+            a_inv = np.linalg.inv(np.asarray(self.object_affines[i], dtype="float64"))
+            # displacement = -shift (see block_affine_matrices convention)
+            d = -np.asarray(self.object_shifts[i], dtype="float32").reshape(
+                *grid_shape, 2
+            )
+            if sigma_blocks and sigma_blocks > 0:
+                # normalized convolution: smooth only over the object's own
+                # blocks so the field isn't pulled toward neighbours/background
+                weight = self.object_block_mask(i, grid_shape).astype("float32")
+                num = ndi.gaussian_filter(
+                    d * weight[..., None], sigma=(sigma_blocks, sigma_blocks, 0),
+                    mode="constant",
+                )
+                den = ndi.gaussian_filter(
+                    weight, sigma=(sigma_blocks, sigma_blocks), mode="constant"
+                )
+                valid = den > 1e-3
+                d = np.where(
+                    valid[..., None], num / np.maximum(den[..., None], 1e-6), d
+                )
+            label_to_obj[int(label)] = (a_inv, np.ascontiguousarray(d))
+
+        field_interp = cv2.INTER_LINEAR if field_order == 1 else cv2.INTER_CUBIC
+        order = 0 if is_mask else 1
+        label_mask = np.ascontiguousarray(self.segmentation_mask)
+
+        return_slice = slice(None)
+        mimg = moving_img
+        if img_util.is_single_channel(mimg) and mimg.ndim == 2:
+            mimg = mimg[np.newaxis]
+            return_slice = 0
+
+        template = da.zeros(out_shape, dtype="uint8", chunks=(cy, cx))
+        warped = [
+            template.map_blocks(
+                align._multiobj_displacement_block,
+                src_array=c,
+                label_to_obj=label_to_obj,
+                base_inv_affine=base_inv_affine,
+                label_mask=label_mask,
+                mask_scale=mask_scale,
+                out_shape=out_shape,
+                cval=float(cval),
+                module=interpolation,
+                order=order,
+                field_interp=field_interp,
+                dtype=mimg.dtype,
+            )
+            for c in mimg
+        ]
+        return da.array(warped)[return_slice]
