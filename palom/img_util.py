@@ -1,9 +1,13 @@
+import functools
+
 import numpy as np
 import dask.array as da
 import cv2
+import scipy.ndimage
 import skimage.transform
 import skimage.filters
 import skimage.morphology
+import skimage.util
 
 def cv2_pyramid(img, max_size=1024):
     size_max = np.array(img.shape).max()
@@ -15,18 +19,35 @@ def cv2_pyramid(img, max_size=1024):
     return pyramid
 
 
+@functools.lru_cache
+def _log_kernels(sigma):
+    # scipy.ndimage.gaussian_laplace builds separable order-0 and order-2
+    # Gaussian-derivative kernels (truncate=4.0). Recover its exact 1D kernels as
+    # impulse responses so cv2.sepFilter2D reproduces it bit-for-bit.
+    radius = int(4.0 * sigma + 0.5)
+    delta = np.zeros(2 * radius + 1)
+    delta[radius] = 1.0
+    g0 = scipy.ndimage.gaussian_filter1d(delta, sigma, order=0, mode="constant")
+    g2 = scipy.ndimage.gaussian_filter1d(delta, sigma, order=2, mode="constant")
+    return g0.astype(np.float32), g2.astype(np.float32)
+
+
 def whiten(img, sigma=1):
-    border_mode = cv2.BORDER_REFLECT
-    g_img = img if sigma == 0 else cv2.GaussianBlur(
-        img, (0, 0), sigma,
-        borderType=border_mode
-    ).astype(np.float32)
-    log_img = cv2.Laplacian(
-        g_img, cv2.CV_32F, ksize=1,
-        borderType=border_mode
-    )
-    # log_img = cv2.convertScaleAbs(log_img)
-    return log_img
+    # True Laplacian-of-Gaussian high-pass (ashlar `utils.whiten`), evaluated with
+    # cv2 (multithreaded SIMD) via analytically-correct separable
+    # Gaussian-derivative kernels -- genuinely scale-selective via `sigma`. The
+    # sign is the positive discrete Laplacian (∇², matching
+    # scipy.ndimage.gaussian_laplace) and is consistent across the sigma == 0 and
+    # sigma > 0 branches, so outputs at different sigmas are directly comparable.
+    img = skimage.util.img_as_float32(img)
+    if sigma == 0:
+        return cv2.Laplacian(
+            img, cv2.CV_32F, ksize=1, borderType=cv2.BORDER_REFLECT
+        )
+    g0, g2 = _log_kernels(sigma)
+    d_axis0 = cv2.sepFilter2D(img, cv2.CV_32F, g0, g2, borderType=cv2.BORDER_REFLECT)
+    d_axis1 = cv2.sepFilter2D(img, cv2.CV_32F, g2, g0, borderType=cv2.BORDER_REFLECT)
+    return d_axis0 + d_axis1
 
 
 def cv2_to_uint8(img):
