@@ -34,6 +34,9 @@ def align_he(
     multi_res: bool = True,
     multi_obj: bool = False,
     multi_obj_kwarg: dict = None,
+    displacement_warp: bool = False,
+    smooth_shifts_sigma: float = 0.0,
+    warp_interpolation: str = "skimage",
     intensity_in_range: tuple[int, int] = None,
     jpeg_compress: bool = False,
 ):
@@ -203,9 +206,39 @@ def align_he(
         if not only_coarse:
             mx = block_mx
 
-        mosaic = palom.align.block_affine_transformed_moving_img(
-            ref_img=aligner.ref_img, moving_img=r2.pyramid[LEVEL2], mxs=mx
-        )
+        if displacement_warp and not only_coarse and multi_obj:
+            # seam-free, mask-constrained multi-object warp: each object gets
+            # its own continuous displacement field, composited per pixel by
+            # the labeled segmentation mask.
+            mosaic = mo_aligner.displacement_transformed_moving_img(
+                r2.pyramid[LEVEL2],
+                sigma_blocks=smooth_shifts_sigma,
+                exclude_objects=(multi_obj_kwarg or {}).get("exclude_objects"),
+                interpolation=warp_interpolation,
+            )
+        elif displacement_warp and not only_coarse:
+            # seam-free warp: interpolate the per-block shifts into a
+            # continuous displacement field instead of a per-block affine.
+            # `aligner` is the per-block aligner here (itself, or
+            # `mr_aligner.base_aligner` in the multi-res path).
+            mosaic = palom.align.block_displacement_transformed_moving_img(
+                ref_img=aligner.ref_img,
+                moving_img=r2.pyramid[LEVEL2],
+                affine_matrix=aligner.affine_matrix,
+                shifts=aligner.shifts,
+                grid_shape=aligner.grid_shape,
+                sigma_blocks=smooth_shifts_sigma,
+                interpolation=warp_interpolation,
+            )
+        else:
+            if displacement_warp and only_coarse:
+                logger.warning(
+                    "`displacement_warp` has no effect with `only_coarse`"
+                    " (no block shifts); using the coarse affine warp"
+                )
+            mosaic = palom.align.block_affine_transformed_moving_img(
+                ref_img=aligner.ref_img, moving_img=r2.pyramid[LEVEL2], mxs=mx
+            )
 
         if (mosaic.shape[0] == 3) & (intensity_in_range is not None):
             out_dtype = mosaic.dtype.name
