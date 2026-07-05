@@ -31,17 +31,19 @@ class MultiResAligner:
         channel1=0, channel2=0,
         thumbnail_channel1=None, thumbnail_channel2=None,
         thumbnail_level1=-1,
+        thumbnails_pixel_size=None,
         min_num_blocks=4
     ) -> None:
         self.reader1 = reader1
         self.reader2 = reader2
         self.level1 = level1
-        
+
         self.channel1 = channel1
         self.channel2 = channel2
         self.thumbnail_channel1 = thumbnail_channel1 or channel1
         self.thumbnail_channel2 = thumbnail_channel2 or channel2
         self.thumbnail_level1 = thumbnail_level1
+        self.thumbnails_pixel_size = thumbnails_pixel_size
 
         self.min_num_blocks = min_num_blocks
         
@@ -63,6 +65,7 @@ class MultiResAligner:
             thumbnail_channel1=state['thumbnail_channel1'],
             thumbnail_channel2=state['thumbnail_channel2'],
             thumbnail_level1=state['thumbnail_level1'],
+            thumbnails_pixel_size=state.get('thumbnails_pixel_size'),
             min_num_blocks=state['min_num_blocks']
         )
         if '_coarse_affine_matrix' in state:
@@ -126,7 +129,8 @@ class MultiResAligner:
                 thumbnail_channel2=self.thumbnail_channel2,
                 thumbnail_level1=self.thumbnail_level1,
                 # FIXME handle user selected thumbnail level
-                thumbnail_level2=None
+                thumbnail_level2=None,
+                thumbnails_pixel_size=self.thumbnails_pixel_size,
             )
             if c21l.num_blocks < self.min_num_blocks:
                 continue
@@ -141,6 +145,7 @@ class MultiResAligner:
             thumbnail_level1=self.thumbnail_level1,
             # FIXME handle user selected thumbnail level
             thumbnail_level2=None,
+            thumbnails_pixel_size=self.thumbnails_pixel_size,
             channel1=self.channel1,
             channel2=self.channel2,
             level1=l1, level2=l2,

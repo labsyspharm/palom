@@ -33,6 +33,7 @@ class MultiObjAligner:
         channel1=0, channel2=0,
         thumbnail_channel1=None, thumbnail_channel2=None,
         thumbnail_level1=-1,
+        thumbnails_pixel_size=None,
     ) -> None:
         self.reader1 = reader1
         self.reader2 = reader2
@@ -44,6 +45,7 @@ class MultiObjAligner:
         self.thumbnail_channel1 = thumbnail_channel1 or channel1
         self.thumbnail_channel2 = thumbnail_channel2 or channel2
         self.thumbnail_level1 = thumbnail_level1
+        self.thumbnails_pixel_size = thumbnails_pixel_size
 
     def run(self, downscale_factor=8, exclude_objects=None, refine=True,
             multi_res=True, min_num_blocks=25):
@@ -218,6 +220,7 @@ class MultiObjAligner:
             channel1=self.channel1, channel2=self.channel2,
             thumbnail_level1=self.thumbnail_level1,
             thumbnail_level2=None,
+            thumbnails_pixel_size=self.thumbnails_pixel_size,
             thumbnail_channel1=self.thumbnail_channel1,
             thumbnail_channel2=self.thumbnail_channel2,
         )
@@ -281,6 +284,7 @@ class MultiObjAligner:
                 thumbnail_channel1=self.thumbnail_channel1,
                 thumbnail_channel2=self.thumbnail_channel2,
                 thumbnail_level1=self.thumbnail_level1,
+                thumbnails_pixel_size=self.thumbnails_pixel_size,
                 # match the standalone `multi_res` path so both use the same
                 # number of pyramid levels (the class default of 4 would add
                 # coarser levels)

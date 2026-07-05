@@ -26,7 +26,7 @@ def align_he(
     auto_mask: bool = True,
     coarse_n_workers: int = 1,
     thumbnail_max_size: int = 2000,
-    thumbnail_pixel_size: float = 10,
+    thumbnail_pixel_size: float = None,
     ref_block_size: int = None,
     refine_coarse_affine: bool = False,
     only_coarse: bool = False,
@@ -93,7 +93,9 @@ def align_he(
         level2=LEVEL2,
         channel1=channel1,
         channel2=channel2,
-        # make thumbnail level pair based on pixel_size
+        # when thumbnail_pixel_size is set it wins and builds both thumbnails at
+        # that fixed physical pixel size; when it's None, thumbnail_level1=None
+        # falls back to the original matched-level behavior
         thumbnail_level1=None,
         thumbnail_channel1=thumbnail_channel1,
         thumbnail_channel2=thumbnail_channel2,
@@ -162,6 +164,7 @@ def align_he(
                 channel2=channel2,
                 thumbnail_channel1=thumbnail_channel1,
                 thumbnail_channel2=thumbnail_channel2,
+                thumbnails_pixel_size=thumbnail_pixel_size,
                 min_num_blocks=25,
             )
             mr_aligner._coarse_affine_matrix = aligner.coarse_affine_matrix
@@ -192,6 +195,7 @@ def align_he(
                 channel2=channel2,
                 thumbnail_channel1=thumbnail_channel1,
                 thumbnail_channel2=thumbnail_channel2,
+                thumbnails_pixel_size=thumbnail_pixel_size,
             )
             mo_aligner._affine_matrix = aligner.affine_matrix
             mo_aligner._coarse_affine_matrix = aligner.coarse_affine_matrix

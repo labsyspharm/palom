@@ -504,21 +504,24 @@ def get_aligner(
 ):
     thumbnail_channel1 = thumbnail_channel1 or channel1
     thumbnail_channel2 = thumbnail_channel2 or channel2
-    if None in [thumbnail_level1, thumbnail_level2]:
+    # `thumbnails_pixel_size` is the authoritative request for thumbnail
+    # resolution: when given it wins outright over the thumbnail-level args
+    # (both readers get thumbnails at the same physical pixel size).
+    if thumbnails_pixel_size is not None:
         px = thumbnails_pixel_size
-        if px is not None:
-            thumbnail1 = make_thumbnail_at_px_size(reader1, px, thumbnail_channel1)
-            thumbnail2 = make_thumbnail_at_px_size(reader2, px, thumbnail_channel2)
+        thumbnail1 = make_thumbnail_at_px_size(reader1, px, thumbnail_channel1)
+        thumbnail2 = make_thumbnail_at_px_size(reader2, px, thumbnail_channel2)
 
-            return Aligner(
-                reader1.read_level_channels(level1, channel1),
-                reader2.read_level_channels(level2, channel2),
-                thumbnail1,
-                thumbnail2,
-                px / reader1.pixel_size / reader1.level_downsamples[level1],
-                px / reader2.pixel_size / reader2.level_downsamples[level2],
-            )
+        return Aligner(
+            reader1.read_level_channels(level1, channel1),
+            reader2.read_level_channels(level2, channel2),
+            thumbnail1,
+            thumbnail2,
+            px / reader1.pixel_size / reader1.level_downsamples[level1],
+            px / reader2.pixel_size / reader2.level_downsamples[level2],
+        )
 
+    if None in [thumbnail_level1, thumbnail_level2]:
         thumbnail_level1, thumbnail_level2 = match_thumbnail_level(
             [reader1, reader2]
         )
