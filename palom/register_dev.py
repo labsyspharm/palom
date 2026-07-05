@@ -192,6 +192,7 @@ def windowed_search_then_register(
     n_keypoints=5000,
     auto_mask=True,
     plot_match_result=False,
+    n_workers=1,
 ):
     """Coarse alignment for small-portion pairs (one scan images only a fraction of
     the other), where whole-image feature matching struggles.
@@ -226,34 +227,53 @@ def windowed_search_then_register(
 
     win = int(min(window, *big.shape))
     step = step or win
-    results = []
-    for r0 in _tile_origins(big.shape[0], win, step):
-        for c0 in _tile_origins(big.shape[1], win, step):
-            # NOTE: cropping to a tile is a form of masked feature matching (it
-            # localizes ORB detection to a subregion so the small portion's
-            # correspondences aren't diluted by the whole image). An equivalent
-            # variant would keep the full image and pass a mask to ORB
-            # (`detect`/`detectAndCompute` accept one) via
-            # register.cv2_feature_detect_and_match, which would also allow arbitrary
-            # (e.g. segmentation-derived) region shapes. Cropping is used here for
-            # simplicity and to preserve local resolution.
-            tile = big[r0 : r0 + win, c0 : c0 + win]
-            mx, n_match = search_then_register(
-                small,
-                tile,
-                max_size=max_size,
-                n_keypoints=n_keypoints,
-                auto_mask=auto_mask,
-                plot_match_result=False,
-                return_match_count=True,
-            )
-            # tile->small composed with big->tile gives big->small
-            big2small = np.vstack([mx, [0, 0, 1]]) @ register_util.translate_mx(-c0, -r0)
-            score = register_util.score_overlap(small, big, big2small, 1.0)
-            results.append((score, n_match, big2small, r0, c0))
-            logger.debug(
-                f"tile(r{r0},c{c0}) ncc={score:.3f} matches={n_match}"
-            )
+
+    def _eval_tile(r0, c0):
+        # NOTE: cropping to a tile is a form of masked feature matching (it
+        # localizes ORB detection to a subregion so the small portion's
+        # correspondences aren't diluted by the whole image). An equivalent
+        # variant would keep the full image and pass a mask to ORB
+        # (`detect`/`detectAndCompute` accept one) via
+        # register.cv2_feature_detect_and_match, which would also allow arbitrary
+        # (e.g. segmentation-derived) region shapes. Cropping is used here for
+        # simplicity and to preserve local resolution.
+        tile = big[r0 : r0 + win, c0 : c0 + win]
+        mx, n_match = search_then_register(
+            small,
+            tile,
+            max_size=max_size,
+            n_keypoints=n_keypoints,
+            auto_mask=auto_mask,
+            plot_match_result=False,
+            return_match_count=True,
+        )
+        # tile->small composed with big->tile gives big->small
+        big2small = np.vstack([mx, [0, 0, 1]]) @ register_util.translate_mx(-c0, -r0)
+        score = register_util.score_overlap(small, big, big2small, 1.0)
+        logger.debug(f"tile(r{r0},c{c0}) ncc={score:.3f} matches={n_match}")
+        return (score, n_match, big2small, r0, c0)
+
+    origins = [
+        (r0, c0)
+        for r0 in _tile_origins(big.shape[0], win, step)
+        for c0 in _tile_origins(big.shape[1], win, step)
+    ]
+    if n_workers == 1:
+        results = [_eval_tile(r0, c0) for r0, c0 in origins]
+    else:
+        # The per-tile work is CPU-bound OpenCV (ORB, BFMatcher, RANSAC) that
+        # releases the GIL, and reads the shared `big`/`small` arrays read-only,
+        # so a thread pool parallelizes without copying the (large) images.
+        # OpenCV's own TBB/OpenMP threads are deliberately left at their default:
+        # benchmarking showed pinning them to 1 is slower at every worker count
+        # (they usefully fill the cores left idle while other tile threads are
+        # blocked on the GIL during the numpy/skimage phases).
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=n_workers
+        ) as executor:
+            results = list(executor.map(lambda o: _eval_tile(*o), origins))
 
     finite = [r for r in results if np.isfinite(r[0])]
     if not finite:
@@ -331,6 +351,7 @@ def coarse_register(
     window=None,
     window_margin=1.0,
     plot_match_result=False,
+    n_workers=1,
     **search_kwargs,
 ):
     """Dispatch coarse alignment between the whole-image and windowed small-portion
@@ -362,6 +383,7 @@ def coarse_register(
         pixel_size_left=pixel_size_left,
         pixel_size_right=pixel_size_right,
         plot_match_result=plot_match_result,
+        n_workers=n_workers,
     )
     if matched_area_ratio is not None and matched_area_ratio < small_portion_area_ratio:
         logger.info(

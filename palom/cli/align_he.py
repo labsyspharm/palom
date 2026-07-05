@@ -24,6 +24,7 @@ def align_he(
     px_size2: float = None,
     n_keypoints: int = 10_000,
     auto_mask: bool = True,
+    coarse_n_workers: int = 1,
     thumbnail_max_size: int = 2000,
     thumbnail_pixel_size: float = 10,
     ref_block_size: int = None,
@@ -111,6 +112,7 @@ def align_he(
         auto_mask=auto_mask,
         max_size=thumbnail_max_size,
         plot_match_result=True,
+        n_workers=coarse_n_workers,
     )
     aligner.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
     fig = plt.gcf()
