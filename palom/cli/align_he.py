@@ -33,7 +33,7 @@ def align_he(
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
     multi_res: bool = True,
-    multi_obj: bool = False,
+    multi_obj: bool = True,
     multi_obj_kwarg: dict = None,
     displacement_warp: bool = False,
     smooth_shifts_sigma: float = 0.0,
@@ -42,10 +42,8 @@ def align_he(
     jpeg_compress: bool = False,
 ):
     _args = locals()
-    assert not (multi_res and multi_obj), (
-        "setting both `multi_res` and `multi_obj` to `True` is not supported,"
-        " choose at most one"
-    )
+    # `multi_res` is retained for back-compat but is now always on (the single
+    # alignment path is multi-res); `multi_obj` toggles per-object segmentation.
     out_dir, p1, p2 = pathlib.Path(out_dir), pathlib.Path(p1), pathlib.Path(p2)
     if out_name is None:
         out_name = f"{p2.stem}-registered.ome.tif"
@@ -105,7 +103,7 @@ def align_he(
     # coarse_register to compute the small-portion overlap fraction and tile size
     thumb_px1 = r1.pixel_size * aligner.ref_thumbnail_down_factor
     thumb_px2 = r2.pixel_size * aligner.moving_thumbnail_down_factor
-    _mx = palom.register_dev.coarse_register(
+    _mx = palom.register_coarse.coarse_register(
         np.asarray(aligner.ref_thumbnail),
         np.asarray(aligner.moving_thumbnail),
         pixel_size_left=thumb_px1,
@@ -144,96 +142,47 @@ def align_he(
         )
 
     if not only_coarse:
-        # the default
-        if not (multi_res or multi_obj):
-            aligner.compute_shifts()
-
-            fig = aligner.plot_shifts()
-            fig.suptitle(f"{p2.name} (block shift distance)", fontsize=8)
-            fig.axes[0].set_title(p1.name, fontsize=6)
-            save_all_figs(out_dir=out_dir / "qc", format="png")
-
-            aligner.constrain_shifts()
-            block_mx = aligner.block_affine_matrices_da
-        elif multi_res:
-            mr_aligner = palom.align_multi_res.MultiResAligner(
-                r1,
-                r2,
-                level1=LEVEL1,
-                channel1=channel1,
-                channel2=channel2,
-                thumbnail_channel1=thumbnail_channel1,
-                thumbnail_channel2=thumbnail_channel2,
-                thumbnails_pixel_size=thumbnail_pixel_size,
-                min_num_blocks=25,
-            )
-            mr_aligner._coarse_affine_matrix = aligner.coarse_affine_matrix
-            mr_aligner.align()
-            mr_aligner.constrain_shifts()
-
-            fig = mr_aligner.plot_shifts()
-            fig.suptitle(f"{p2.name} (multi-res aligment)", fontsize=8)
-            fig.axes[0].set_title(p1.name, fontsize=6)
-            save_all_figs(out_dir=out_dir / "qc", format="png", dpi=144)
-
-            pickle_dir = out_dir / "pickle"
-            if not pickle_dir.exists():
-                pickle_dir.mkdir(exist_ok=True, parents=True)
-            import pickle
-
-            with open(pickle_dir / f"{p2.name}-palom.pkl", "wb") as f:
-                pickle.dump(mr_aligner, f)
-
-            aligner = mr_aligner.base_aligner
-            block_mx = mr_aligner.base_aligner.block_affine_matrices_da
-        elif multi_obj:
-            mo_aligner = palom.align_multi_obj.MultiObjAligner(
-                r1,
-                r2,
-                level1=LEVEL1,
-                channel1=channel1,
-                channel2=channel2,
-                thumbnail_channel1=thumbnail_channel1,
-                thumbnail_channel2=thumbnail_channel2,
-                thumbnails_pixel_size=thumbnail_pixel_size,
-            )
-            mo_aligner._affine_matrix = aligner.affine_matrix
-            mo_aligner._coarse_affine_matrix = aligner.coarse_affine_matrix
-            if multi_obj_kwarg is None:
-                multi_obj_kwarg = {}
-            mo_aligner.run(**multi_obj_kwarg)
-            save_all_figs(
-                out_dir=out_dir / "qc" / p2.stem, format="png", dpi=144, prefix=p2.name
-            )
-            block_mx = mo_aligner.block_affine_matrices_da
+        # Single alignment path: the multi-object orchestrator, always
+        # multi-res. `multi_obj` toggles segmentation -- True (default) splits
+        # the scan into tissue pieces and aligns each independently; False
+        # treats the whole scan as one global object (the classic
+        # single-object, multi-res alignment == N=1). The old standalone
+        # single-res and MultiResAligner routes are folded into this one path.
+        mo_aligner = palom.align_multi_obj.MultiObjAligner(
+            r1,
+            r2,
+            level1=LEVEL1,
+            channel1=channel1,
+            channel2=channel2,
+            thumbnail_channel1=thumbnail_channel1,
+            thumbnail_channel2=thumbnail_channel2,
+            thumbnails_pixel_size=thumbnail_pixel_size,
+        )
+        # reuse the coarse affine (and optional refinement) computed above as the
+        # baseline, instead of poking private attributes
+        mo_aligner.seed_baseline_coarse(aligner.coarse_affine_matrix)
+        run_kwargs = dict(multi_obj_kwarg or {})
+        run_kwargs.setdefault("segment", multi_obj)
+        mo_aligner.run(**run_kwargs)
+        save_all_figs(
+            out_dir=out_dir / "qc" / p2.stem, format="png", dpi=144, prefix=p2.name
+        )
+        block_mx = mo_aligner.block_affine_matrices_da
 
     if not only_qc:
         mx = aligner.affine_matrix
         if not only_coarse:
             mx = block_mx
 
-        if displacement_warp and not only_coarse and multi_obj:
-            # seam-free, mask-constrained multi-object warp: each object gets
-            # its own continuous displacement field, composited per pixel by
-            # the labeled segmentation mask.
+        if displacement_warp and not only_coarse:
+            # seam-free, mask-constrained warp: each object gets its own
+            # continuous displacement field (a single object in the
+            # non-segmented case), composited per pixel by the labeled
+            # segmentation mask.
             mosaic = mo_aligner.displacement_transformed_moving_img(
                 r2.pyramid[LEVEL2],
                 sigma_blocks=smooth_shifts_sigma,
-                exclude_objects=(multi_obj_kwarg or {}).get("exclude_objects"),
-                interpolation=warp_interpolation,
-            )
-        elif displacement_warp and not only_coarse:
-            # seam-free warp: interpolate the per-block shifts into a
-            # continuous displacement field instead of a per-block affine.
-            # `aligner` is the per-block aligner here (itself, or
-            # `mr_aligner.base_aligner` in the multi-res path).
-            mosaic = palom.align.block_displacement_transformed_moving_img(
-                ref_img=aligner.ref_img,
-                moving_img=r2.pyramid[LEVEL2],
-                affine_matrix=aligner.affine_matrix,
-                shifts=aligner.shifts,
-                grid_shape=aligner.grid_shape,
-                sigma_blocks=smooth_shifts_sigma,
+                exclude_objects=run_kwargs.get("exclude_objects"),
                 interpolation=warp_interpolation,
             )
         else:

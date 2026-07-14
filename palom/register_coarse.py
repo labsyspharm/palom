@@ -8,6 +8,14 @@ from . import img_util, register_util, register
 
 
 def masked_match_histograms(img, ref_img, mask=None, ref_mask=None):
+    # NOT the same as register_util.masked_match_histograms, despite the shared
+    # name: this one accepts explicit masks, computes them at full resolution
+    # when omitted, and matches with skimage's exact `_match_cumulative_cdf`.
+    # register_util's takes no masks, derives them from a ~500px downsample, and
+    # matches with the coarser `match_quantized`. Both are exercised on the
+    # coarse path (this via search_then_register, that via ensambled_match), so
+    # they are kept distinct on purpose -- merging them would change registration
+    # output.
     import skimage.exposure.histogram_matching
 
     if mask is None:

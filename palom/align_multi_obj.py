@@ -8,7 +8,7 @@ import skimage.measure
 import skimage.segmentation
 import skimage.transform
 
-from . import align, align_multi_res, align_refine, img_util, register_dev
+from . import align, align_multi_res, align_refine, img_util, register_coarse
 
 
 def transform_bbox(bbox, affine_mx):
@@ -47,14 +47,36 @@ class MultiObjAligner:
         self.thumbnail_level1 = thumbnail_level1
         self.thumbnails_pixel_size = thumbnails_pixel_size
 
-    def run(self, downscale_factor=8, exclude_objects=None, refine=True,
-            multi_res=True, min_num_blocks=25):
-        self.segment_objects(downscale_factor=downscale_factor, plot_segmentation=True)
+    def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
+            exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25):
+        self.segment_objects(
+            downscale_factor=downscale_factor, merge_gap=merge_gap,
+            segment=segment, plot_segmentation=True,
+        )
         self.align_all_objects(
             plot_shift=True, refine=refine, multi_res=multi_res,
             min_num_blocks=min_num_blocks,
         )
         self.combine_object_results(exclude_objects=exclude_objects)
+
+    def seed_baseline_coarse(self, coarse_affine_matrix):
+        """Seed the baseline (whole-image) coarse affine from outside, instead
+        of letting `_coarse_align` compute it lazily.
+
+        `coarse_affine_matrix` is in the thumbnail frame (a 3x3, as produced by
+        `Aligner.coarse_affine_matrix` / `register_coarse.coarse_register`). This
+        replaces callers poking `_coarse_affine_matrix`/`_affine_matrix`
+        directly: the baseline is used for object bbox transforms, the
+        background fill in `combine_object_results`, and the fallback affine in
+        the multi-object displacement warp.
+        """
+        coarse_affine_matrix = np.asarray(coarse_affine_matrix)
+        if coarse_affine_matrix.shape == (2, 3):
+            coarse_affine_matrix = np.vstack([coarse_affine_matrix, [0, 0, 1]])
+        c21l = self.aligner
+        c21l.coarse_affine_matrix = coarse_affine_matrix
+        self._coarse_affine_matrix = coarse_affine_matrix
+        self._affine_matrix = c21l.affine_matrix
 
     @cached_property
     def aligner(self):
@@ -123,15 +145,45 @@ class MultiObjAligner:
         self._coarse_affine_matrix = c21l.coarse_affine_matrix
         self._affine_matrix = c21l.affine_matrix
 
-    def segment_objects(self, downscale_factor=8, min_area=None, plot_segmentation=False):
+    def segment_objects(self, downscale_factor=8, min_area=None,
+                        merge_gap=500.0, segment=True, plot_segmentation=False):
         shape = self.ref_thumbnail.shape
         mask = img_util.entropy_mask(
             img_util.cv2_downscale_local_mean(
                 self.ref_thumbnail, downscale_factor
             )
         )
-        labeled = skimage.morphology.label(mask)
-        labeled = skimage.segmentation.expand_labels(labeled, 4)
+        if not segment:
+            # single global object: all tissue is one label (no splitting). It
+            # still runs the same per-object coarse + multi-res block-shift path,
+            # so "one object" is exactly the classic single-object multi-res
+            # alignment (N=1 degenerate case of the multi-object orchestrator).
+            labeled = mask.astype("int32")
+        else:
+            # Conservative merge (err toward one object): bridge gaps up to
+            # `merge_gap` microns before labeling, so a single torn/folded piece
+            # -- or one with a low-entropy interior (fat, lumen) -- stays one
+            # object instead of splitting into several. Only genuinely
+            # well-separated pieces survive as distinct objects; within-piece
+            # motion is the block-shift field's job, not the segmenter's. A
+            # wrong split is a hard, visible seam, whereas a missed split just
+            # means the shift field does slightly more work -- so we lean toward
+            # merging. `merge_gap` is in microns (resolution-independent); set 0
+            # to disable. Closing with a radius-r disk fills gaps up to ~2*r.
+            if merge_gap and merge_gap > 0:
+                small_px_um = (
+                    self.reader1.pixel_size
+                    * self.reader1.level_downsamples[self.level1]
+                    * self.aligner.ref_thumbnail_down_factor
+                    * downscale_factor
+                )
+                r = int(round(0.5 * merge_gap / small_px_um))
+                if r >= 1:
+                    mask = skimage.morphology.binary_closing(
+                        mask, skimage.morphology.disk(r)
+                    )
+            labeled = skimage.morphology.label(mask)
+            labeled = skimage.segmentation.expand_labels(labeled, 4)
 
         regionprops = skimage.measure.regionprops_table(
             labeled, properties=['label', 'bbox', 'area']
@@ -242,7 +294,7 @@ class MultiObjAligner:
         c21l.ref_thumbnail = masked_t_ref
         c21l.moving_thumbnail = masked_t_moving
         # use the same coarse method as the CLI's first step
-        # (`register_dev.search_then_register`); flip/intensity-invert and the
+        # (`register_coarse.search_then_register`); flip/intensity-invert and the
         # reference-order search are handled internally, so no explicit
         # `test_flip`/`test_intensity_invert` is needed here
         default_kwargs = {
@@ -250,7 +302,7 @@ class MultiObjAligner:
             'plot_match_result': True,
             'auto_mask': True,
         }
-        _mx = register_dev.search_then_register(
+        _mx = register_coarse.search_then_register(
             np.asarray(masked_t_ref),
             np.asarray(masked_t_moving),
             **{**default_kwargs, **kwargs}

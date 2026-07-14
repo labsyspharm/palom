@@ -1,10 +1,10 @@
 """Experimental phase-correlation / Fourier-Mellin coarse alignment.
 
 NOT production-ready. `phase_correlation_register` is a correlation-based alternative
-to `register_dev.search_then_register` for cross-modality / small-portion pairs. It is
+to `register_coarse.search_then_register` for cross-modality / small-portion pairs. It is
 kept isolated here because Fourier-Mellin couples scale+rotation and is fragile to
 content mismatch under rotation (works reliably only near true rotation ~0); the
-feature-based windowed route in `register_dev` is the more robust path. See the
+feature-based windowed route in `register_coarse` is the more robust path. See the
 `palom-pc-coarse-align` design notes for the full findings.
 
 `fm_backend="diplib"` uses diplib's `FourierMellinMatch2D` (optional dependency);
@@ -21,7 +21,10 @@ import skimage.registration
 import skimage.transform
 from loguru import logger
 
-from . import img_util, register_util, register
+# quarantined dev/reference module (Fourier-Mellin phase-correlation coarse
+# alignment); kept out of the shipped package. Absolute import so it still runs
+# standalone from palom/.dev/.
+from palom import img_util, register_util, register
 
 
 def _mx_scale(scale):

@@ -150,6 +150,9 @@ def match_bf_fl_histogram(img1, img2, auto_mask=False):
 
 
 def masked_match_histograms(img, ref_img):
+    # Distinct from register_coarse.masked_match_histograms (see the note there):
+    # this variant takes no explicit masks, derives them from a ~500px
+    # downsample, and matches with `match_quantized`. Kept separate on purpose.
     if IS_BF_IMG(img) != IS_BF_IMG(ref_img):
         bg = ['dark', 'light']
         print('`img` and `ref_img` detected as different types:')

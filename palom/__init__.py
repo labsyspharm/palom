@@ -14,12 +14,12 @@ from . import (
     align_refine,
     pyramid,
     color,
-    
+    register_coarse,
+
     # debugging
     block_affine,
     extract,
     img_util,
     register,
     register_util,
-    register_dev,
 )
