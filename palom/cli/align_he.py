@@ -9,6 +9,7 @@ import skimage.exposure
 from loguru import logger
 
 import palom
+from palom.plot_util import set_subplot_size
 
 
 def align_he(
@@ -290,19 +291,6 @@ def save_all_figs(dpi=300, format="pdf", out_dir=None, prefix=None):
     for f, n, nm in zip(figs, plt.get_fignums(), names):
         f.savefig(out_dir / f"{n}-{nm}.{format}", dpi=dpi, bbox_inches="tight")
         plt.close(f)
-
-
-def set_subplot_size(w, h, ax=None):
-    """w, h: width, height in inches"""
-    if not ax:
-        ax = plt.gca()
-    l = ax.figure.subplotpars.left
-    r = ax.figure.subplotpars.right
-    t = ax.figure.subplotpars.top
-    b = ax.figure.subplotpars.bottom
-    figw = float(w) / (r - l)
-    figh = float(h) / (t - b)
-    ax.figure.set_size_inches(figw, figh)
 
 
 def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):

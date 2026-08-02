@@ -75,12 +75,16 @@ def refine_affine_by_block_translation(
     accept_residual=5.0,
     block_mask=None,
     plot=True,
+    arrow_scaling="sqrt",
 ):
     """Refine `aligner.coarse_affine_matrix` from block-wise PC translations.
 
     `block_mask`, if given, is a boolean array of shape `aligner.ref_img.numblocks`
     that restricts block sampling to a region (e.g. a single tissue object);
     only blocks where it is True are used.
+
+    `arrow_scaling` controls how the QC plot maps shift magnitude to arrow
+    length ("sqrt", "linear" or "unit"); see `_plot_shift_field`.
 
     Returns the refined coarse_affine_matrix (in thumbnail frame, ready to
     assign back to `aligner.coarse_affine_matrix`), or None if the refinement
@@ -178,7 +182,10 @@ def refine_affine_by_block_translation(
     )
 
     if plot:
-        _plot_shift_field(aligner, centers, shifts, inliers, n_in, len(centers))
+        _plot_shift_field(
+            aligner, centers, shifts, inliers, n_in, len(centers),
+            arrow_scaling=arrow_scaling,
+        )
 
     # convert full-res affine back to thumbnail frame (inverse of the scaling
     # applied in Aligner.affine_matrix):
@@ -193,25 +200,97 @@ def refine_affine_by_block_translation(
     return ref_s @ A_new @ np.linalg.inv(mov_s)
 
 
-def _plot_shift_field(aligner, centers, shifts, inliers, n_in, n_total):
+def _plot_shift_field(
+    aligner, centers, shifts, inliers, n_in, n_total, arrow_scaling="sqrt"
+):
+    """QC plot of the per-block residual shifts over the reference thumbnail.
+
+    Arrow *direction* is the measured shift; arrow *length* is a compressed
+    mapping of its magnitude (`arrow_scaling`: "sqrt", "linear" or "unit"), and
+    the true magnitude is read off the arrow color / colorbar. Plain "linear"
+    length makes small shifts vanish whenever a few blocks shift a lot, so the
+    default sqrt keeps every arrow's direction legible while still ranking them
+    by size. Blocks rejected by RANSAC are ringed in red.
+    """
+    import matplotlib.patheffects as pe
     import matplotlib.pyplot as plt
 
+    from .plot_util import set_subplot_size
+
     thumb = np.asarray(aligner.ref_thumbnail).astype("float32")
-    sc = thumb.shape[1] / (aligner.ref_img.shape[1])
-    fig, ax = plt.subplots(figsize=(9, 8))
-    fig.suptitle("coarse affine refinement (residual shift field)")
-    ax.imshow(np.log1p(thumb), cmap="gray")
-    cx, cy = centers.T
+    im_h, im_w = thumb.shape[:2]
+    # block centers are in full-res ref pixels; the aligner already knows how
+    # much the thumbnail is downsampled from that frame
+    sc = 1 / aligner.ref_thumbnail_down_factor
+    cx, cy = (centers * sc).T
     ux, uy = shifts.T
-    colors = ["lime" if i else "red" for i in inliers]
-    ax.quiver(
-        cx * sc, cy * sc, ux, -uy, color=colors,
-        angles="xy", scale_units="xy", scale=8, width=0.004,
+    mag = np.hypot(ux, uy)
+
+    # robust upper bound so one wild block doesn't flatten the whole colormap
+    vmax = max(float(np.percentile(mag, 98)), 1e-6)
+    # arrow length range in thumbnail px; the floor keeps a 1px shift visible
+    # next to a 100px one, which plain proportional length cannot do
+    l_max = 0.05 * np.hypot(im_h, im_w)
+    l_min = 0.25 * l_max
+    unit_mag = np.clip(mag / vmax, 0, 1)
+    fraction = {
+        "sqrt": np.sqrt(unit_mag),
+        "linear": unit_mag,
+        "unit": np.ones_like(unit_mag),
+    }[arrow_scaling]
+    lengths = l_min + (l_max - l_min) * fraction
+    safe_mag = np.where(mag > 0, mag, 1.0)
+    dx, dy = ux / safe_mag * lengths, uy / safe_mag * lengths
+
+    fig, ax = plt.subplots()
+    fig.suptitle("coarse affine refinement (residual shift field)")
+    # washed out so the arrows read over both bright (brightfield) and dark
+    # (fluorescence) tissue; "cool" stays saturated at both ends of its range,
+    # unlike viridis whose dark end disappears against dark tissue
+    ax.imshow(np.log1p(thumb), cmap="gray", alpha=0.7)
+    # y is flipped because the image origin is at the top
+    quiver = ax.quiver(
+        cx, cy, dx, -dy, mag,
+        cmap="cool", clim=(0, vmax),
+        angles="xy", scale_units="xy", scale=1,
+        # head kept small enough that a floor-length arrow still shows a shaft
+        width=0.003, headwidth=3, headlength=4, headaxislength=3.5,
     )
+    outliers = ~inliers
+    if outliers.any():
+        ax.scatter(
+            cx[outliers], cy[outliers], s=64,
+            facecolors="none", edgecolors="red", linewidths=1.0,
+        )
     ax.set_title(
-        f"green=inlier ({n_in}/{n_total}), red=outlier;"
-        f" median |shift| {np.median(np.hypot(ux, uy)):.0f}px",
+        f"inliers {n_in}/{n_total} (rejected blocks ringed in red);"
+        f" median |shift| {np.median(mag):.1f}px, max {mag.max():.1f}px;"
+        f" arrow length ~ {arrow_scaling}(|shift|), color = |shift|",
         fontsize=8,
     )
     ax.axis("off")
+
+    # keep the colorbar inside the image so `set_subplot_size` stays exact:
+    # label above the bar, ticks below, both within the axes
+    cax = ax.inset_axes([0.03, 0.06, 0.22, 0.015])
+    cbar = fig.colorbar(quiver, cax=cax, orientation="horizontal", extend="max")
+    cbar.set_label("|shift| (full-res px)")
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.outline.set_edgecolor("white")
+    # the colorbar sits on the thumbnail, which may be light or dark
+    cbar.ax.tick_params(labelsize=6, colors="white", pad=1)
+    for text in [*cbar.ax.get_xticklabels(), cbar.ax.xaxis.label]:
+        text.set_fontsize(7)
+        text.set_path_effects([pe.withStroke(linewidth=1.0, foreground="black")])
+
+    # size the axes to the thumbnail instead of a hard-coded figsize, but keep
+    # a floor: this plot's title and colorbar carry more text than the coarse
+    # match plot and would dwarf a small thumbnail
+    w_in, h_in = im_w / 288, im_h / 288
+    if w_in < 5:
+        w_in, h_in = 5, h_in * 5 / w_in
+    set_subplot_size(w_in, h_in, ax=ax)
+    ax.set_anchor("N")
+    # use 0.5 inch on the top for figure title
+    fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
     return fig
