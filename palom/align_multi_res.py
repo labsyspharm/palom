@@ -48,47 +48,6 @@ class MultiResAligner:
         self.min_num_blocks = min_num_blocks
         
         self._make_aligners()
-    
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        props = ['aligners', 'base_aligners']
-        for pp in props:
-            if pp in state: del state[pp]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        self.__init__(
-            state['reader1'], state['reader2'],
-            level1=state['level1'],
-            channel1=state['channel1'], channel2=state['channel2'],
-            thumbnail_channel1=state['thumbnail_channel1'],
-            thumbnail_channel2=state['thumbnail_channel2'],
-            thumbnail_level1=state['thumbnail_level1'],
-            thumbnails_pixel_size=state.get('thumbnails_pixel_size'),
-            min_num_blocks=state['min_num_blocks']
-        )
-        if '_coarse_affine_matrix' in state:
-            for aligner in self.aligners:
-                aligner.coarse_affine_matrix = state['_coarse_affine_matrix']
-        if '_aligner_shifts' in state:
-            if len(state['_aligner_shifts']) == len(self.aligners):
-                for aa, ss in zip(self.aligners, state['_aligner_shifts']):
-                    aa.shifts = ss
-        # FIXME this does not fully recover the state before pickling, running
-        # `constrain_shifts()` is required after loading the pickled
-
-    @property
-    def levels(self):
-        levels = filter(
-            lambda x: x >= self.level1,
-            self.reader1.level_downsamples.keys()
-        )
-        levels = filter(
-            lambda x: np.prod(self.reader1.pyramid[x].numblocks) >= self.min_num_blocks,
-            levels
-        )
-        return sorted(levels)
 
     @property
     def downsample_factors(self):
@@ -104,22 +63,26 @@ class MultiResAligner:
         return list(filtered)
     
     @property
-    def base_aligner(self):
-        import copy
-        aligner = copy.deepcopy(self.aligners[0])
-        if hasattr(self, 'shifts'):
-            aligner.shifts = self.shifts
-        return aligner
-
-    @property
     def coarse_affine_matrix(self):
-        if not hasattr(self, '_coarse_affine_matrix'):
-            self._coarse_align()
-        return self._coarse_affine_matrix
-    
+        # no separate copy is kept here: the finest aligner owns the matrix and
+        # `align` propagates it to the coarser levels. `MultiObjAligner` always
+        # assigns one (per object); reading it unassigned falls back to the base
+        # `Aligner.coarse_register_affine` and its weaker defaults.
+        return self.aligners[0].coarse_affine_matrix
+
+    @coarse_affine_matrix.setter
+    def coarse_affine_matrix(self, mx):
+        for aligner in self.aligners:
+            aligner.coarse_affine_matrix = mx
+
     def _make_aligners(self):
         self.level2 = self.level_pairs[0][1]
         self.aligners = []
+        # `levels` must be exactly the levels that produced `aligners` -- the
+        # two are zipped in `constrain_shifts` and `plot_shifts`. Deriving it
+        # from `reader1.pyramid[x].numblocks` instead double-counts the channel
+        # axis (readers chunk it to 1), which keeps levels that get no aligner.
+        self.levels = []
         for l1, l2 in self.level_pairs:
             c21l = align.get_aligner(
                 self.reader1, self.reader2, 
@@ -135,29 +98,7 @@ class MultiResAligner:
             if c21l.num_blocks < self.min_num_blocks:
                 continue
             self.aligners.append(c21l)
-
-    def _coarse_align(self, **kwargs):
-        l1, l2 = self.level_pairs[0]
-        aligner = align.get_aligner(
-            self.reader1, self.reader2,
-            thumbnail_channel1=self.thumbnail_channel1,
-            thumbnail_channel2=self.thumbnail_channel2,
-            thumbnail_level1=self.thumbnail_level1,
-            # FIXME handle user selected thumbnail level
-            thumbnail_level2=None,
-            thumbnails_pixel_size=self.thumbnails_pixel_size,
-            channel1=self.channel1,
-            channel2=self.channel2,
-            level1=l1, level2=l2,
-        )
-        default_kwargs = {
-            'n_keypoints': 20_000,
-            'plot_match_result': True,
-            'test_flip': True,
-            'test_intensity_invert': True,
-        }
-        aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
-        self._coarse_affine_matrix = aligner.coarse_affine_matrix
+            self.levels.append(l1)
 
     def align(self, mask_fn=None):
         # `mask_fn(grid_shape) -> bool array` optionally restricts block-shift
@@ -165,8 +106,10 @@ class MultiResAligner:
         # must return a non-empty mask for every level so each aligner keeps
         # at least one finite block (an all-False mask crashes constrain).
         self._aligner_shifts = []
+        # read once: the getter registers lazily when nobody assigned a matrix
+        coarse_affine_matrix = self.coarse_affine_matrix
         for aligner in self.aligners:
-            aligner.coarse_affine_matrix = self.coarse_affine_matrix
+            aligner.coarse_affine_matrix = coarse_affine_matrix
             if mask_fn is None:
                 aligner.compute_shifts()
             else:
@@ -242,7 +185,7 @@ class MultiResAligner:
 
         from .cli import flow
         
-        shape = self.base_aligner.grid_shape
+        shape = self.aligners[0].grid_shape
         shifts = self.shifts.T.reshape(2, *shape)
 
         # `valid_masks` already encodes finiteness (constrain's isfinite guard)

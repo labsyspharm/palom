@@ -115,7 +115,7 @@ def align_he(
         plot_match_result=True,
         n_workers=coarse_n_workers,
     )
-    aligner.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
+    aligner.coarse_affine_matrix = _mx
     fig = plt.gcf()
     fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     ax = fig.axes[0]  # feature-match axes (first for both the whole-image and

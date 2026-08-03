@@ -369,6 +369,40 @@ class Aligner:
         self.moving_thumbnail=moving_thumbnail
         self.ref_thumbnail_down_factor=ref_thumbnail_down_factor
         self.moving_thumbnail_down_factor=moving_thumbnail_down_factor
+        self._coarse_affine_matrix = None
+
+    @property
+    def coarse_affine_matrix(self):
+        """Coarse affine in the thumbnail frame, as a 3x3.
+
+        The single place this matrix is stored: assign a matrix measured
+        elsewhere (any of the `register_coarse` entry points, or
+        `align_refine.refine_affine_by_block_translation`) and the setter
+        normalizes it; read it without assigning and it is registered lazily.
+        Multi-level / multi-object orchestrators hold an `Aligner` and use this
+        property instead of caching their own copy.
+        """
+        if self._coarse_affine_matrix is None:
+            self.coarse_register_affine()
+        return self._coarse_affine_matrix
+
+    @coarse_affine_matrix.setter
+    def coarse_affine_matrix(self, mx):
+        mx = np.asarray(mx, dtype=float)
+        if mx.shape == (2, 3):
+            mx = np.vstack([mx, [0, 0, 1]])
+        assert mx.shape == (3, 3), f"affine matrix must be 2x3 or 3x3, got {mx.shape}"
+        self._coarse_affine_matrix = mx
+
+    @property
+    def has_coarse_affine_matrix(self):
+        """Whether a coarse affine is available without registering one.
+
+        Lets an orchestrator run its *own* coarse registration (with its own
+        engine and defaults) only when needed, instead of tripping the lazy
+        `coarse_register_affine` in the getter.
+        """
+        return self._coarse_affine_matrix is not None
 
     def coarse_register_affine(self, **kwargs):
         default_kwargs = {
@@ -378,18 +412,13 @@ class Aligner:
         default_kwargs.update(kwargs)
         ref_img = self.ref_thumbnail
         moving_img = self.moving_thumbnail
-        affine_matrix = register.feature_based_registration(
+        self.coarse_affine_matrix = register.feature_based_registration(
             ref_img, moving_img,
             **default_kwargs
         )
-        self.coarse_affine_matrix = np.vstack(
-            [affine_matrix, [0, 0, 1]]
-        )
-   
+
     @property
     def affine_matrix(self):
-        if not hasattr(self, 'coarse_affine_matrix'):
-            self.coarse_register_affine()
         affine = skimage.transform.AffineTransform
         mx_ref = affine(scale=1/self.ref_thumbnail_down_factor).params
         mx_moving = affine(scale=1/self.moving_thumbnail_down_factor).params

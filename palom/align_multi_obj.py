@@ -63,20 +63,13 @@ class MultiObjAligner:
         """Seed the baseline (whole-image) coarse affine from outside, instead
         of letting `_coarse_align` compute it lazily.
 
-        `coarse_affine_matrix` is in the thumbnail frame (a 3x3, as produced by
-        `Aligner.coarse_affine_matrix` / `register_coarse.coarse_register`). This
-        replaces callers poking `_coarse_affine_matrix`/`_affine_matrix`
-        directly: the baseline is used for object bbox transforms, the
-        background fill in `combine_object_results`, and the fallback affine in
-        the multi-object displacement warp.
+        `coarse_affine_matrix` is in the thumbnail frame (2x3 or 3x3, as
+        produced by `register_coarse.coarse_register`). The baseline is used for
+        object bbox transforms, the background fill in
+        `combine_object_results`, and the fallback affine in the multi-object
+        displacement warp.
         """
-        coarse_affine_matrix = np.asarray(coarse_affine_matrix)
-        if coarse_affine_matrix.shape == (2, 3):
-            coarse_affine_matrix = np.vstack([coarse_affine_matrix, [0, 0, 1]])
-        c21l = self.aligner
-        c21l.coarse_affine_matrix = coarse_affine_matrix
-        self._coarse_affine_matrix = coarse_affine_matrix
-        self._affine_matrix = c21l.affine_matrix
+        self.aligner.coarse_affine_matrix = coarse_affine_matrix
 
     @cached_property
     def aligner(self):
@@ -102,38 +95,29 @@ class MultiObjAligner:
             self.moving_thumbnail[~img_util.entropy_mask(self.moving_thumbnail)]
         )
     
+    # the baseline coarse/full-res affines live on `self.aligner` -- no copy is
+    # kept here. Reading one before `seed_baseline_coarse` runs `_coarse_align`,
+    # whose defaults differ from (are stronger than) the base `Aligner`'s, so the
+    # lazy registration must be triggered here rather than in the getter.
     @property
     def baseline_affine_matrix(self):
-        if not hasattr(self, '_affine_matrix'):
+        if not self.aligner.has_coarse_affine_matrix:
             self._coarse_align()
-        return self._affine_matrix
+        return self.aligner.affine_matrix
 
     @property
     def baseline_coarse_affine_matrix(self):
-        if not hasattr(self, '_coarse_affine_matrix'):
+        if not self.aligner.has_coarse_affine_matrix:
             self._coarse_align()
-        return self._coarse_affine_matrix
-    
+        return self.aligner.coarse_affine_matrix
+
     @property
     def bbox_ref_thumbnail(self):
         if not hasattr(self, '_bbox_ref_thumbnail'):
             self.segment_objects(plot_segmentation=True)
         return self._bbox_ref_thumbnail
-    
-    @cached_property
-    def bbox_ref_img_block(self):
-        bbox = self.bbox_ref_thumbnail.astype(float)
-        c21l = self.aligner
-        downsample_factor = c21l.ref_thumbnail_down_factor
-        rchunk, cchunk = c21l.ref_img.chunksize
-        bbox[:, 0:2] *= downsample_factor / rchunk
-        bbox[:, 2:4] *= downsample_factor / cchunk
-        bbox[:, [0, 2]] = np.clip(np.floor(bbox[:, [0, 2]]), 0, None)
-        bbox[:, [1, 3]] = np.ceil(np.ceil(bbox[:, [1, 3]]))
-        return bbox.astype(int)
 
     def _coarse_align(self, **kwargs):
-        c21l = self.make_aligner()
         default_kwargs = {
             'n_keypoints': 20_000,
             'plot_match_result': True,
@@ -141,9 +125,7 @@ class MultiObjAligner:
             'test_intensity_invert': True,
             'auto_mask': True
         }
-        c21l.coarse_register_affine(**{**default_kwargs, **kwargs})
-        self._coarse_affine_matrix = c21l.coarse_affine_matrix
-        self._affine_matrix = c21l.affine_matrix
+        self.aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
 
     def segment_objects(self, downscale_factor=8, min_area=None,
                         merge_gap=500.0, segment=True, plot_segmentation=False):
@@ -307,7 +289,7 @@ class MultiObjAligner:
             np.asarray(masked_t_moving),
             **{**default_kwargs, **kwargs}
         )
-        c21l.coarse_affine_matrix = np.vstack([_mx, [0, 0, 1]])
+        c21l.coarse_affine_matrix = _mx
         if plot_shifts:
             import matplotlib.pyplot as plt
             plt.gcf().suptitle(f"Object {i} (coarse alignment)")
@@ -342,17 +324,19 @@ class MultiObjAligner:
                 # coarser levels)
                 min_num_blocks=min_num_blocks,
             )
-            mr._coarse_affine_matrix = c21l.coarse_affine_matrix
+            mr.coarse_affine_matrix = c21l.coarse_affine_matrix
             mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
             mr.constrain_shifts()
-            block_aligner = mr.base_aligner
+            # the finest-level aligner carries this object's affine; the shifts
+            # are the cross-level pick made by `constrain_shifts`
+            affine_matrix, shifts = mr.aligners[0].affine_matrix, mr.shifts
             # QC: show the multi-res per-level selection (not just the combined
             # field) for this object
             shift_plotter = mr
         else:
             c21l.compute_shifts(mask=shift_mask)
             c21l.constrain_shifts()
-            block_aligner = c21l
+            affine_matrix, shifts = c21l.affine_matrix, c21l.shifts
             shift_plotter = c21l
         if plot_shifts:
             try:
@@ -363,8 +347,8 @@ class MultiObjAligner:
                 print(f'\nFailed plotting shifts for object: {i}\n')
                 print(e)
         return (
-            block_aligner.affine_matrix, block_aligner.shifts,
-            block_aligner.block_affine_matrices, shift_mask,
+            affine_matrix, shifts,
+            align.block_affine_matrices(affine_matrix, shifts), shift_mask,
         )
 
     def align_all_objects(self, plot_shift=True, refine=True, multi_res=True,
