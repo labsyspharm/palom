@@ -1,13 +1,9 @@
-import functools
-
 import numpy as np
 import dask.array as da
 import cv2
-import scipy.ndimage
 import skimage.transform
 import skimage.filters
 import skimage.morphology
-import skimage.util
 
 def cv2_pyramid(img, max_size=1024):
     size_max = np.array(img.shape).max()
