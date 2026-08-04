@@ -251,7 +251,9 @@ c21l = palom.align.Aligner(
     moving_thumbnail_down_factor=c2r.level_downsamples[THUMBNAIL_LEVEL] / c2r.level_downsamples[LEVEL]
 )
 
-# run feature-based affine registration using thumbnails
+# run feature-based affine registration using thumbnails; the intensity and
+# orientation differences between the two modalities are searched for
+# automatically, and a QC plot of the resulting feature matches is shown
 c21l.coarse_register_affine(n_keypoints=4000)
 # after coarsly affine registered, run phase correlation on each of the
 # corresponding chunks (blocks/pieces) to refine translations

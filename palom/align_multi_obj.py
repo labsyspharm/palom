@@ -124,12 +124,11 @@ class MultiObjAligner:
         return self._bbox_ref_thumbnail
 
     def _coarse_align(self, **kwargs):
+        # the flip / intensity-invert / reference-order search is internal to
+        # `coarse_register`, so only the keypoint budget is raised here
         default_kwargs = {
             'n_keypoints': 20_000,
             'plot_match_result': True,
-            'test_flip': True,
-            'test_intensity_invert': True,
-            'auto_mask': True
         }
         self.aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
 
@@ -375,10 +374,8 @@ class MultiObjAligner:
         c21l = self.make_aligner()
         c21l.ref_thumbnail = masked_t_ref
         c21l.moving_thumbnail = masked_t_moving
-        # use the same coarse method as the CLI's first step
-        # (`register_coarse.search_then_register`); flip/intensity-invert and the
-        # reference-order search are handled internally, so no explicit
-        # `test_flip`/`test_intensity_invert` is needed here
+        # flip/intensity-invert and the reference-order search are handled
+        # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
         default_kwargs = {
             'n_keypoints': 10_000,
             'plot_match_result': True,

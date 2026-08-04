@@ -67,7 +67,7 @@ class MultiResAligner:
         # no separate copy is kept here: the finest aligner owns the matrix and
         # `align` propagates it to the coarser levels. `MultiObjAligner` always
         # assigns one (per object); reading it unassigned falls back to the base
-        # `Aligner.coarse_register_affine` and its weaker defaults.
+        # `Aligner.coarse_register_affine` and its smaller keypoint budget.
         return self.aligners[0].coarse_affine_matrix
 
     @coarse_affine_matrix.setter

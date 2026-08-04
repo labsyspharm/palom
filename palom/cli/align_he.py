@@ -4,7 +4,6 @@ import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
 import skimage.exposure
 from loguru import logger
 
@@ -99,32 +98,19 @@ def align_he(
         thumbnail_channel2=thumbnail_channel2,
         thumbnails_pixel_size=thumbnail_pixel_size,
     )
-    # thumbnail pixel sizes (level 0 px size x thumbnail level downsample); used by
-    # coarse_register to compute the small-portion overlap fraction and tile size.
-    # Both must be real: a placeholder 1 µm on one side alone skews the footprint
-    # ratio by the true pixel size and can flip the route. `coarse_register`
-    # already treats `None` as "skip the geometry test", which is the honest
-    # degradation -- it then picks the route from the match count and overlap NCC.
-    if r1.has_pixel_size and r2.has_pixel_size:
-        thumb_px1 = r1.pixel_size * aligner.ref_thumbnail_down_factor
-        thumb_px2 = r2.pixel_size * aligner.moving_thumbnail_down_factor
-    else:
-        thumb_px1 = thumb_px2 = None
+    if not (r1.has_pixel_size and r2.has_pixel_size):
+        # `get_aligner` leaves the thumbnail pixel sizes unset, so the coarse
+        # route is picked from match confidence alone -- the honest degradation,
+        # since a placeholder 1 µm on one side alone skews the physical-footprint
+        # ratio by the true pixel size and can flip the route
         logger.warning(
             "Missing pixel size metadata; choosing the coarse route from match"
             " confidence alone. Pass `px_size1`/`px_size2` to enable the"
             " physical-footprint test"
         )
-    _mx = palom.register_coarse.coarse_register(
-        np.asarray(aligner.ref_thumbnail),
-        np.asarray(aligner.moving_thumbnail),
-        pixel_size_left=thumb_px1,
-        pixel_size_right=thumb_px2,
-        n_keypoints=n_keypoints,
-        plot_match_result=True,
-        n_workers=coarse_n_workers,
+    aligner.coarse_register_affine(
+        n_keypoints=n_keypoints, n_workers=coarse_n_workers
     )
-    aligner.coarse_affine_matrix = _mx
     fig = plt.gcf()
     fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     ax = fig.axes[0]  # feature-match axes (first for both the whole-image and

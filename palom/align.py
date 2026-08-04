@@ -8,6 +8,7 @@ from loguru import logger
 import tqdm.dask
 
 from . import register
+from . import register_coarse
 from . import block_affine
 from . import img_util
 
@@ -361,7 +362,13 @@ class Aligner:
         ref_thumbnail,
         moving_thumbnail,
         ref_thumbnail_down_factor,
-        moving_thumbnail_down_factor
+        moving_thumbnail_down_factor,
+        # physical size (um) of one thumbnail pixel; `coarse_register_affine`
+        # uses the pair to tell whether the two scans image comparable tissue
+        # areas. `None` (either one) means "unknown" -- the coarse route is then
+        # picked from match confidence alone, never from a placeholder scale.
+        ref_thumbnail_pixel_size=None,
+        moving_thumbnail_pixel_size=None,
     ) -> None:
         self.ref_img=ref_img
         self.moving_img=moving_img
@@ -369,6 +376,8 @@ class Aligner:
         self.moving_thumbnail=moving_thumbnail
         self.ref_thumbnail_down_factor=ref_thumbnail_down_factor
         self.moving_thumbnail_down_factor=moving_thumbnail_down_factor
+        self.ref_thumbnail_pixel_size=ref_thumbnail_pixel_size
+        self.moving_thumbnail_pixel_size=moving_thumbnail_pixel_size
         self._coarse_affine_matrix = None
 
     @property
@@ -405,15 +414,25 @@ class Aligner:
         return self._coarse_affine_matrix is not None
 
     def coarse_register_affine(self, **kwargs):
+        """Register the thumbnails and store the result in
+        `coarse_affine_matrix`.
+
+        `register_coarse.coarse_register` is the engine: it searches the
+        intensity/orientation configs itself (so cross-modality and mirrored
+        pairs need no explicit flip/invert flags) and falls back to a windowed
+        route when one scan images only a portion of the other. `kwargs` are
+        forwarded to it.
+        """
         default_kwargs = {
             'n_keypoints': 2000,
             'plot_match_result': True
         }
         default_kwargs.update(kwargs)
-        ref_img = self.ref_thumbnail
-        moving_img = self.moving_thumbnail
-        self.coarse_affine_matrix = register.feature_based_registration(
-            ref_img, moving_img,
+        self.coarse_affine_matrix = register_coarse.coarse_register(
+            np.asarray(self.ref_thumbnail),
+            np.asarray(self.moving_thumbnail),
+            pixel_size_left=self.ref_thumbnail_pixel_size,
+            pixel_size_right=self.moving_thumbnail_pixel_size,
             **default_kwargs
         )
 
@@ -536,6 +555,12 @@ def get_aligner(
     # `thumbnails_pixel_size` is the authoritative request for thumbnail
     # resolution: when given it wins outright over the thumbnail-level args
     # (both readers get thumbnails at the same physical pixel size).
+
+    # a thumbnail pixel size is only meaningful when BOTH readers know their
+    # own: the coarse route is chosen from the ratio of the two, so one real
+    # size against the other's 1 um placeholder is worse than no size at all
+    known_px_size = reader1.has_pixel_size and reader2.has_pixel_size
+
     if thumbnails_pixel_size is not None:
         px = thumbnails_pixel_size
         thumbnail1 = make_thumbnail_at_px_size(reader1, px, thumbnail_channel1)
@@ -548,6 +573,8 @@ def get_aligner(
             thumbnail2,
             px / reader1.pixel_size / reader1.level_downsamples[level1],
             px / reader2.pixel_size / reader2.level_downsamples[level2],
+            px if known_px_size else None,
+            px if known_px_size else None,
         )
 
     if None in [thumbnail_level1, thumbnail_level2]:
@@ -556,13 +583,19 @@ def get_aligner(
         )
     if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
     if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
+    thumbnail_px1 = thumbnail_px2 = None
+    if known_px_size:
+        thumbnail_px1 = reader1.pixel_size * reader1.level_downsamples[thumbnail_level1]
+        thumbnail_px2 = reader2.pixel_size * reader2.level_downsamples[thumbnail_level2]
     return Aligner(
-        reader1.read_level_channels(level1, channel1), 
+        reader1.read_level_channels(level1, channel1),
         reader2.read_level_channels(level2, channel2),
         reader1.read_level_channels(thumbnail_level1, thumbnail_channel1),
         reader2.read_level_channels(thumbnail_level2, thumbnail_channel2),
         reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1],
-        reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2]
+        reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2],
+        thumbnail_px1,
+        thumbnail_px2,
     )
 
 

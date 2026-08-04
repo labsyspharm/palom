@@ -212,10 +212,16 @@ def run_palom(
        
         # FIXME move the saving figure logic
         plt.suptitle(f"L: {ref_reader.path.name}\nR: {p.name}")
-        fig_w = max(plt.gca().get_xlim())
-        fig_h = max(plt.gca().get_ylim()) + 100
-        factor = 1600 / max(fig_w, fig_h)
-        plt.gcf().set_size_inches(fig_w*factor/72, fig_h*factor/72)
+        fig = plt.gcf()
+        if len(fig.axes) == 1:
+            # size the figure to the feature-match image. The windowed coarse
+            # route adds a locator panel, whose extent must not drive the figure
+            # size, so that layout is left alone.
+            ax = fig.axes[0]
+            fig_w = max(ax.get_xlim())
+            fig_h = max(ax.get_ylim()) + 100
+            factor = 1600 / max(fig_w, fig_h)
+            fig.set_size_inches(fig_w*factor/72, fig_h*factor/72)
         plt.tight_layout()
         plt.savefig(qc_path / f"{idx+1:02d}-{p.name}.png", dpi=72)
         plt.close()
