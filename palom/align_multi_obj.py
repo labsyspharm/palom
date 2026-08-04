@@ -9,7 +9,9 @@ import skimage.segmentation
 import skimage.transform
 from loguru import logger
 
-from . import align, align_multi_res, align_refine, img_util, register_coarse
+from . import (
+    align, align_multi_res, align_refine, img_util, register_coarse, register_util,
+)
 
 
 def transform_bbox(bbox, affine_mx):
@@ -59,6 +61,9 @@ class MultiObjAligner:
             min_num_blocks=min_num_blocks,
         )
         self.combine_object_results(exclude_objects=exclude_objects)
+        logger.info(
+            "Alignment QC summary\n" + self.qc_summary(exclude_objects)
+        )
 
     def seed_baseline_coarse(self, coarse_affine_matrix):
         """Seed the baseline (whole-image) coarse affine from outside, instead
@@ -284,6 +289,76 @@ class MultiObjAligner:
             thumbnail_channel2=self.thumbnail_channel2,
         )
     
+    # Fall back only when the preferred affine's overlap score has collapsed to
+    # this fraction of the best candidate's.
+    #
+    # `score_overlap` is a gross-failure detector, not a fine discriminator. It
+    # is the same cross-modality confidence `coarse_register` uses to decide
+    # whether an affine is plausible at all, and cross-modality it sits around
+    # 0.25-0.35, where its differences are structural rather than positional.
+    # Measured on the two-object pair: a refinement that is 0.46px accurate
+    # scored 0.254 while the unrefined fit at 20.87px scored 0.308 -- ranking
+    # near-neighbours by this score gets them backwards. A gross failure looks
+    # nothing like that: on the melanoma pair a per-object fit that landed
+    # nowhere scored 0.003 against 0.241. Only that collapse is detectable.
+    FALLBACK_SCORE_RATIO = 0.5
+
+    @classmethod
+    def _choose_by_score(cls, scores, preferred):
+        """Keep `preferred` unless its score has collapsed against the best.
+
+        Kept separate from the measuring so the rule can be pinned against the
+        scores actually observed, rather than against whatever a synthetic image
+        happens to produce -- the metric's near-neighbour behaviour depends on
+        the content and does not survive being mocked up.
+        """
+        best = max(scores, key=scores.get)
+        if scores[preferred] < cls.FALLBACK_SCORE_RATIO * scores[best]:
+            return best
+        return preferred
+
+    def _pick_object_affine(self, i, candidates, ref_crop, moving, to_crop=None):
+        """Choose among coarse affine candidates by overlap score.
+
+        `align_object` used to accept its per-object fit unconditionally. That
+        fit is a fresh feature match on masked thumbnails, so it can land well
+        off while the whole-image baseline -- which it is a perturbation of --
+        was fine. One bad object is a hard visible seam, so the fit has to beat
+        the fallback rather than merely exist.
+
+        The comparison is deliberately blunt: keep the most refined candidate
+        unless its score has collapsed (see `FALLBACK_SCORE_RATIO`). The score
+        cannot rank near-neighbours, so a close contest is not evidence and must
+        not move the choice -- only a fit that landed nowhere is detectable.
+
+        Score on the object's *crop* of the real thumbnails, not on the masked
+        ones the coarse fit was made from: masking fills everything outside the
+        bbox with a constant, and `score_overlap` whitens, so the synthetic
+        rectangle edge would carry weight that the tissue should.
+
+        `to_crop` maps the reference thumbnail frame (which the candidates are
+        in) into `ref_crop`'s frame.
+        """
+        if to_crop is None:
+            to_crop = np.eye(3)
+        scores = {
+            name: register_util.score_overlap(ref_crop, moving, to_crop @ mx)
+            for name, mx in candidates
+        }
+        preferred = candidates[-1][0]
+        chosen = self._choose_by_score(scores, preferred)
+        if chosen != preferred:
+            logger.warning(
+                f"Object {i}: '{preferred}' coarse affine scores"
+                f" {scores[preferred]:.3f} against {scores[chosen]:.3f} for"
+                f" '{chosen}'; falling back to '{chosen}'"
+            )
+        logger.info(
+            f"Object {i}: coarse affine '{chosen}' ("
+            + ", ".join(f"{k}={v:.3f}" for k, v in scores.items()) + ")"
+        )
+        return chosen, scores
+
     def align_object(self, i, plot_shifts=True, refine=True, multi_res=True,
                      min_num_blocks=25, **kwargs):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
@@ -319,19 +394,35 @@ class MultiObjAligner:
             import matplotlib.pyplot as plt
             plt.gcf().suptitle(f"Object {i} (coarse alignment)")
 
+        # candidates in increasing order of preference; the whole-image baseline
+        # is the known-good fallback this object's own fit has to beat
+        candidates = [
+            ("baseline", np.asarray(self.baseline_coarse_affine_matrix)),
+            ("object", c21l.coarse_affine_matrix),
+        ]
+
         # per-object block region from the segmentation label (not bbox), so
         # overlapping object bounding boxes don't cross-assign blocks
         block_mask = self.object_block_mask(i)
 
+        refine_stats = None
         if refine:
-            refined = align_refine.refine_affine_by_block_translation(
+            refined, refine_stats = align_refine.refine_affine_by_block_translation(
                 c21l, block_mask=block_mask, plot=plot_shifts
             )
             if refined is not None:
                 c21l.coarse_affine_matrix = refined
+                candidates.append(("object+refine", c21l.coarse_affine_matrix))
                 if plot_shifts:
                     import matplotlib.pyplot as plt
                     plt.gcf().suptitle(f"Object {i} (coarse affine refinement)")
+
+        chosen, scores = self._pick_object_affine(
+            i, candidates,
+            self.ref_thumbnail[rs:re, cs:ce], self.moving_thumbnail,
+            register_util.translate_mx(-cs, -rs),
+        )
+        c21l.coarse_affine_matrix = dict(candidates)[chosen]
 
         shift_mask = da.from_array(block_mask, chunks=1)
         if multi_res:
@@ -363,14 +454,29 @@ class MultiObjAligner:
             c21l.constrain_shifts()
             affine_matrix, shifts = c21l.affine_matrix, c21l.shifts
             shift_plotter = c21l
+        plot_failed = False
         if plot_shifts:
             try:
                 shift_plotter.plot_shifts()
                 import matplotlib.pyplot as plt
                 plt.gcf().suptitle(f"Object {i} (block shifts)")
             except Exception as e:
-                print(f'\nFailed plotting shifts for object: {i}\n')
-                print(e)
+                plot_failed = True
+                logger.warning(f"Failed plotting shifts for object {i}: {e}")
+
+        in_object = np.asarray(block_mask).ravel()
+        magnitudes = np.linalg.norm(np.asarray(shifts)[in_object], axis=1)
+        self.object_qc.append({
+            "object": i,
+            "label": int(self._object_labels[i]),
+            "n_blocks": int(in_object.sum()),
+            "affine": chosen,
+            "scores": scores,
+            "refine": refine_stats,
+            "shift_median": float(np.median(magnitudes)) if magnitudes.size else None,
+            "shift_max": float(magnitudes.max()) if magnitudes.size else None,
+            "plot_failed": plot_failed,
+        })
         return (
             affine_matrix, shifts,
             align.block_affine_matrices(affine_matrix, shifts), shift_mask,
@@ -382,6 +488,7 @@ class MultiObjAligner:
         shift_masks = []
         object_affines = []
         object_shifts = []
+        self.object_qc = []
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
             affine, shifts, mx, mask = self.align_object(
                 idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
@@ -397,6 +504,59 @@ class MultiObjAligner:
         # the displacement-field warp can build one continuous field per object
         self.object_affines = np.array(object_affines)
         self.object_shifts = np.array(object_shifts)
+
+    @staticmethod
+    def _format_refine(stats):
+        if stats is None:
+            return "not run"
+        if stats["accepted"]:
+            return (f"{stats['n_inliers']}/{stats['n_correspondences']} inliers,"
+                    f" {stats['residual']:.2f}px")
+        return f"rejected ({stats['reason']})"
+
+    def qc_summary(self, exclude_objects=None):
+        """One table saying what each object's alignment actually did.
+
+        Every decision here is already logged, but as single lines among
+        thousands: a rejected refinement, a per-object coarse that lost to the
+        baseline, a shift plot that raised. Those are exactly the outcomes worth
+        seeing, and a run that ends without a verdict is not hands-off, only
+        quiet.
+        """
+        qc = getattr(self, "object_qc", None)
+        if not qc:
+            return "  (no objects aligned)"
+        excluded = set(exclude_objects or [])
+        head = (f"  {'obj':>3} {'label':>5} {'blocks':>6}  {'affine':<14}"
+                f" {'score':>5}  {'refinement':<30} {'shift med/max':>13}  notes")
+        lines = [head, "  " + "-" * (len(head) - 2)]
+        n_fallback = n_rejected = 0
+        for r in qc:
+            preferred = "object+refine" if "object+refine" in r["scores"] else "object"
+            notes = []
+            if r["affine"] != preferred:
+                notes.append(f"FELL BACK to {r['affine']}")
+                n_fallback += 1
+            if r["refine"] is not None and not r["refine"]["accepted"]:
+                n_rejected += 1
+            if r["plot_failed"]:
+                notes.append("shift plot failed")
+            if r["object"] in excluded:
+                notes.append("EXCLUDED from output")
+            shift = "-"
+            if r["shift_median"] is not None:
+                shift = f"{r['shift_median']:.1f} / {r['shift_max']:.1f}"
+            score = r["scores"].get(r["affine"], float("nan"))
+            lines.append(
+                f"  {r['object']:>3} {r['label']:>5} {r['n_blocks']:>6} "
+                f" {r['affine']:<14} {score:>5.3f}  {self._format_refine(r['refine']):<30}"
+                f" {shift:>13}  {', '.join(notes)}"
+            )
+        tail = [f"  {len(qc)} object(s); {n_fallback} fell back to a lower-ranked"
+                f" affine, {n_rejected} refinement(s) rejected"]
+        if n_fallback or n_rejected:
+            tail.append("  ^ check the per-object QC figures for these")
+        return "\n".join(lines + tail)
 
     def combine_object_results(self, exclude_objects=None):
         to_include = np.ones(len(self.shift_masks), dtype=bool)

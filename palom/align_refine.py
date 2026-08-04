@@ -110,11 +110,17 @@ def refine_affine_by_block_translation(
     `arrow_scaling` controls how the QC plot maps shift magnitude to arrow
     length ("sqrt", "linear" or "unit"); see `_plot_shift_field`.
 
-    Returns the refined coarse_affine_matrix (in thumbnail frame, ready to
-    assign back to `aligner.coarse_affine_matrix`), or None if the refinement
-    is rejected (too few inliers, or it failed to tighten the inlier
-    alignment) -- in which case the caller should keep the coarse affine.
+    Returns `(matrix, stats)`. `matrix` is the refined coarse_affine_matrix (in
+    thumbnail frame, ready to assign back to `aligner.coarse_affine_matrix`), or
+    None if the refinement is rejected (too few inliers, or it failed to tighten
+    the inlier alignment) -- in which case the caller should keep the coarse
+    affine. `stats` records what happened for QC reporting; a rejection is
+    otherwise a single log line among thousands, which is how an object can
+    silently lose its refinement.
     """
+    stats = {"accepted": False, "reason": None, "n_sampled": 0,
+             "n_correspondences": 0, "n_inliers": 0, "residual": None,
+             "window_px": None}
     ref = aligner.ref_img
     moving = aligner.moving_img
     A = aligner.affine_matrix  # full-res moving(x,y)->ref(x,y)
@@ -165,9 +171,12 @@ def refine_affine_by_block_translation(
         f"Affine refinement: {len(centers)} block correspondences from"
         f" {len(picks)} sampled tissue blocks (~{block_px}px)"
     )
+    stats.update(n_sampled=len(picks), n_correspondences=len(centers),
+                 window_px=block_px)
     if len(centers) < min_inliers:
         logger.warning("Too few block correspondences; keeping coarse affine")
-        return None
+        stats["reason"] = f"only {len(centers)} correspondences"
+        return None, stats
 
     # skimage convention: ref(x) ~ moving_warped(x - shift), so ref point c
     # corresponds to original moving point inv_A(c - shift)
@@ -179,7 +188,8 @@ def refine_affine_by_block_translation(
     )
     if M is None or inliers is None:
         logger.warning("RANSAC affine fit failed; keeping coarse affine")
-        return None
+        stats["reason"] = "RANSAC fit failed"
+        return None, stats
     inliers = inliers.ravel().astype(bool)
     A_new = np.vstack([M, [0, 0, 1]])
 
@@ -188,12 +198,16 @@ def refine_affine_by_block_translation(
         skimage.transform.AffineTransform(matrix=A_new)(src[inliers]) - dst[inliers]
     ).T)
     median_res = float(np.median(res)) if n_in else np.inf
+    stats.update(n_inliers=n_in, residual=median_res)
     if n_in < min_inliers or median_res > accept_residual:
         logger.warning(
             f"Affine refinement rejected (inliers {n_in}/{len(centers)},"
             f" inlier residual {median_res:.2f}px); keeping coarse affine"
         )
-        return None
+        stats["reason"] = (
+            f"{n_in} inliers, residual {median_res:.2f}px"
+        )
+        return None, stats
 
     correction = A_new @ np.linalg.inv(A)
     ct = skimage.transform.AffineTransform(matrix=correction)
@@ -228,7 +242,8 @@ def refine_affine_by_block_translation(
     mov_s = skimage.transform.AffineTransform(
         scale=1 / aligner.moving_thumbnail_down_factor
     ).params
-    return ref_s @ A_new @ np.linalg.inv(mov_s)
+    stats.update(accepted=True, center_shift=tuple(float(v) for v in center_shift))
+    return ref_s @ A_new @ np.linalg.inv(mov_s), stats
 
 
 def _plot_shift_field(

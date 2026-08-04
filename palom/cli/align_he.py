@@ -145,7 +145,7 @@ def align_he(
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
 
     if refine_coarse_affine:
-        refined = palom.align_refine.refine_affine_by_block_translation(aligner)
+        refined, _ = palom.align_refine.refine_affine_by_block_translation(aligner)
         if refined is not None:
             aligner.coarse_affine_matrix = refined
             fig = plt.gcf()
