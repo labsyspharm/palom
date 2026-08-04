@@ -24,27 +24,23 @@ def align_he(
     px_size1: float = None,
     px_size2: float = None,
     n_keypoints: int = 10_000,
-    auto_mask: bool = True,
     coarse_n_workers: int = 1,
-    thumbnail_max_size: int = 2000,
     thumbnail_pixel_size: float = None,
     shift_block_size: int = None,
-    refine_coarse_affine: bool = False,
+    multi_obj: bool = True,
+    merge_gap: float = 500.0,
+    exclude_objects: list = None,
+    min_num_blocks: int = 25,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
-    multi_res: bool = True,
-    multi_obj: bool = True,
-    multi_obj_kwarg: dict = None,
-    displacement_warp: bool = False,
+    displacement_warp: bool = True,
     smooth_shifts_sigma: float = 0.0,
     warp_interpolation: str = "skimage",
     intensity_in_range: tuple[int, int] = None,
     jpeg_compress: bool = False,
 ):
     _args = locals()
-    # `multi_res` is retained for back-compat but is now always on (the single
-    # alignment path is multi-res); `multi_obj` toggles per-object segmentation.
     out_dir, p1, p2 = pathlib.Path(out_dir), pathlib.Path(p1), pathlib.Path(p2)
     if out_name is None:
         out_name = f"{p2.stem}-registered.ome.tif"
@@ -125,8 +121,6 @@ def align_he(
         pixel_size_left=thumb_px1,
         pixel_size_right=thumb_px2,
         n_keypoints=n_keypoints,
-        auto_mask=auto_mask,
-        max_size=thumbnail_max_size,
         plot_match_result=True,
         n_workers=coarse_n_workers,
     )
@@ -144,14 +138,6 @@ def align_he(
         fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
 
-    if refine_coarse_affine:
-        refined, _ = palom.align_refine.refine_affine_by_block_translation(aligner)
-        if refined is not None:
-            aligner.coarse_affine_matrix = refined
-            fig = plt.gcf()
-            fig.suptitle(f"{p2.name} (coarse affine refinement)", fontsize=8)
-            save_all_figs(out_dir=out_dir / "qc", format="png", dpi=144)
-
     if viz_coarse_napari:
         _ = viz_coarse(
             r1, r2, LEVEL1, LEVEL2, channel1, channel2, aligner.affine_matrix
@@ -162,8 +148,7 @@ def align_he(
         # multi-res. `multi_obj` toggles segmentation -- True (default) splits
         # the scan into tissue pieces and aligns each independently; False
         # treats the whole scan as one global object (the classic
-        # single-object, multi-res alignment == N=1). The old standalone
-        # single-res and MultiResAligner routes are folded into this one path.
+        # single-object, multi-res alignment == N=1).
         mo_aligner = palom.align_multi_obj.MultiObjAligner(
             r1,
             r2,
@@ -174,12 +159,15 @@ def align_he(
             thumbnail_channel2=thumbnail_channel2,
             thumbnails_pixel_size=thumbnail_pixel_size,
         )
-        # reuse the coarse affine (and optional refinement) computed above as the
-        # baseline, instead of poking private attributes
+        # reuse the coarse affine computed above as the baseline, instead of
+        # poking private attributes
         mo_aligner.seed_baseline_coarse(aligner.coarse_affine_matrix)
-        run_kwargs = dict(multi_obj_kwarg or {})
-        run_kwargs.setdefault("segment", multi_obj)
-        mo_aligner.run(**run_kwargs)
+        mo_aligner.run(
+            segment=multi_obj,
+            merge_gap=merge_gap,
+            exclude_objects=exclude_objects,
+            min_num_blocks=min_num_blocks,
+        )
         save_all_figs(
             out_dir=out_dir / "qc" / p2.stem, format="png", dpi=144, prefix=p2.name
         )
@@ -198,15 +186,12 @@ def align_he(
             mosaic = mo_aligner.displacement_transformed_moving_img(
                 r2.pyramid[LEVEL2],
                 sigma_blocks=smooth_shifts_sigma,
-                exclude_objects=run_kwargs.get("exclude_objects"),
+                exclude_objects=exclude_objects,
                 interpolation=warp_interpolation,
             )
         else:
-            if displacement_warp and only_coarse:
-                logger.warning(
-                    "`displacement_warp` has no effect with `only_coarse`"
-                    " (no block shifts); using the coarse affine warp"
-                )
+            # `only_coarse` has no block shifts, so there is no displacement
+            # field to build -- the coarse affine warp is the only option
             mosaic = palom.align.block_affine_transformed_moving_img(
                 ref_img=aligner.ref_img, moving_img=r2.pyramid[LEVEL2], mxs=mx
             )

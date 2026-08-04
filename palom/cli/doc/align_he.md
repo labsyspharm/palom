@@ -95,7 +95,7 @@ palom-align-he run-pair
 ---
 
 Use a specific channel (e.g., the first channel) from the reference image during
-coarse alignment, and do not mask the background:
+coarse alignment, and use more keypoints:
 
 ```bash
 palom-align-he run-pair 
@@ -103,7 +103,20 @@ palom-align-he run-pair
     /path/to/moving/he/image/P2.vsi
     /path/to/OUT_DIR
     --thumbnail_channel1 0
-    --auto_mask False
+    --n_keypoints 20000
+```
+
+---
+
+Drop a tissue piece (object 1 in the QC summary) from the output — useful when
+the slide carries a control or a folded fragment that should not be aligned:
+
+```bash
+palom-align-he run-pair 
+    /path/to/reference/image/P1.ome.tiff
+    /path/to/moving/he/image/P2.vsi
+    /path/to/OUT_DIR
+    --exclude_objects "[1]"
 ```
 
 ---
@@ -179,7 +192,20 @@ palom-align-he run-batch example.csv
     1. __Refined Alignment__: After coarse alignment, the coarsely-aligned
        full-resolution images are aligned using a refined process.
        Phase-correlation is used to determine X-Y shifts (translations) in the
-       images, block by block, to achieve a precise alignment.
+       images, block by block, to achieve a precise alignment. The block shifts
+       are measured from coarse to fine across pyramid levels, so a block whose
+       shift is unreliable at the finest level falls back to a coarser level's
+       value.
+
+       By default the scan is first segmented into separate tissue pieces
+       (`--multi_obj`) and each piece gets its own coarse affine and shift
+       field; pieces closer than `--merge_gap` micron are merged into one, since
+       an incorrectly split piece leaves a visible seam. The per-piece results
+       are then composited into one image by a continuous displacement field
+       (`--displacement_warp`), which removes the block-edge cracks a per-block
+       affine warp produces. The log ends with a QC summary listing each
+       object's index, block count, which coarse affine was used, and its median
+       and maximum block shift.
 
 - Achieving a good coarse alignment is crucial. While the `align-pair` command
   attempts to handle differences in image orientation and contrast, visual
@@ -209,8 +235,9 @@ palom-align-he run-batch example.csv
   - `--thumbnail_channel1` or/and `--thumbnail_channel2` for specifying
     different channels for feature detection and matching
   - `--n_keypoints` for adjusting the number of keypoints detected in the images
-  - `--auto_mask` for specifying whether to automatically mask the non-tissue
-    region in the image
+  - `--px_size1` or/and `--px_size2` when a file does not record its pixel size;
+    the physical scale decides whether the two scans image comparable tissue
+    areas, and a wrong one can send the coarse alignment down the wrong route
   - Checkout [argument defaults in the `run-pair`
     command](#argument-defaults-in-run-pair) section for more info
 
@@ -262,20 +289,57 @@ FLAGS
               default is the third channel (B in RGB image)
         Type: int
         Default: 2
+    --px_size1=PX_SIZE1
+        Help: pixel size (um) of P1, overriding the image metadata; needed
+              when the file does not record one
+        Type: Optional[float]
+        Default: None
+    --px_size2=PX_SIZE2
+        Help: pixel size (um) of P2, overriding the image metadata
+        Type: Optional[float]
+        Default: None
     -n, --n_keypoints=N_KEYPOINTS
         Help: Number of keypoints to extract for matching during coarse
               alignment; between 5000 to 20000 is recommended
         Type: int
         Default: 10000
-    -a, --auto_mask=AUTO_MASK
-        Help: Automatically mask non-tissue regions in the image during
-              coarse alignment
-        Default: True
-    --thumbnail_max_size=THUMBNAIL_MAX_SIZE
-        Help: Max size (width and height) of the thumbnails used in coarse
-              alignment; will downsize thumbnails if any of them exceeds
+    --coarse_n_workers=COARSE_N_WORKERS
+        Help: Number of threads used by the windowed coarse route (only
+              used when the two scans image very different tissue areas)
         Type: int
-        Default: 2000
+        Default: 1
+    --thumbnail_pixel_size=THUMBNAIL_PIXEL_SIZE
+        Help: Build both coarse-alignment thumbnails at this fixed physical
+              pixel size (um); default matches pyramid levels instead
+        Type: Optional[float]
+        Default: None
+    --shift_block_size=SHIFT_BLOCK_SIZE
+        Help: Block size (px) of the deformation field; smaller blocks
+              resolve finer local deformation. Default is the reference
+              image's own chunk size
+        Type: Optional[int]
+        Default: None
+    --multi_obj=MULTI_OBJ
+        Help: Segment the scan into separate tissue pieces and align each
+              one independently; False treats the whole scan as one piece
+        Type: bool
+        Default: True
+    --merge_gap=MERGE_GAP
+        Help: Tissue pieces separated by less than this gap (um) are merged
+              into one object; 0 disables merging
+        Type: float
+        Default: 500.0
+    -e, --exclude_objects=EXCLUDE_OBJECTS
+        Help: Indices of the segmented objects to drop from the output, in
+              the format of "[1, 2]"; check the QC summary in the log for
+              the indices
+        Type: Optional[list]
+        Default: None
+    --min_num_blocks=MIN_NUM_BLOCKS
+        Help: Skip the coarse pyramid levels that have fewer than this many
+              blocks in the coarse-to-fine multi-resolution pass
+        Type: int
+        Default: 25
     --only_coarse=ONLY_COARSE
         Help: Only perform coarse alignment
         Type: bool
@@ -284,15 +348,25 @@ FLAGS
         Help: Only run alignments without transforming the moving image (P2)
         Type: bool
         Default: False
-    --multi_res=MULTI_RES
-        Type: bool
-        Default: True
-    --multi_obj=MULTI_OBJ
+    -v, --viz_coarse_napari=VIZ_COARSE_NAPARI
+        Help: Open the coarse alignment result in napari for inspection
         Type: bool
         Default: False
-    --multi_obj_kwarg=MULTI_OBJ_KWARG
-        Type: Optional[dict]
-        Default: None
+    -d, --displacement_warp=DISPLACEMENT_WARP
+        Help: Warp P2 with a continuous per-object displacement field
+              (seam-free) instead of a per-block affine warp
+        Type: bool
+        Default: True
+    --smooth_shifts_sigma=SMOOTH_SHIFTS_SIGMA
+        Help: Gaussian smoothing (in blocks) applied to the displacement
+              field; 0 disables smoothing
+        Type: float
+        Default: 0.0
+    -w, --warp_interpolation=WARP_INTERPOLATION
+        Help: Interpolation backend for the displacement warp; "skimage"
+              or "cv2"
+        Type: str
+        Default: 'skimage'
     -i, --intensity_in_range=INTENSITY_IN_RANGE
         Help: Adjust contrast range in the transformed moving image if P2 is
               an RGB image; in the format of "(MIN_VALUE, MAX_VALUE)"
