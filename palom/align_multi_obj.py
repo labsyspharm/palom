@@ -51,14 +51,15 @@ class MultiObjAligner:
         self.thumbnails_pixel_size = thumbnails_pixel_size
 
     def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
-            exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25):
+            exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25,
+            windowed_coarse=True):
         self.segment_objects(
             downscale_factor=downscale_factor, merge_gap=merge_gap,
             segment=segment, plot_segmentation=True,
         )
         self.align_all_objects(
             plot_shift=True, refine=refine, multi_res=multi_res,
-            min_num_blocks=min_num_blocks,
+            min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
         )
         self.combine_object_results(exclude_objects=exclude_objects)
         logger.info(
@@ -359,7 +360,7 @@ class MultiObjAligner:
         return chosen, scores
 
     def align_object(self, i, plot_shifts=True, refine=True, multi_res=True,
-                     min_num_blocks=25, **kwargs):
+                     min_num_blocks=25, windowed_coarse=True, **kwargs):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = transform_bbox(
             self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix
@@ -381,11 +382,26 @@ class MultiObjAligner:
             'plot_match_result': True,
             'auto_mask': True,
         }
-        _mx = register_coarse.search_then_register(
-            np.asarray(masked_t_ref),
-            np.asarray(masked_t_moving),
-            **{**default_kwargs, **kwargs}
-        )
+        if windowed_coarse:
+            # `coarse_register` adds a windowed retry when the whole-image match
+            # comes back weak, which is an object's only chance of recovering
+            # from a failed fit -- `search_then_register` just returns identity.
+            # `matched_area_ratio=1.0` skips its physical-footprint test: both
+            # masked thumbnails are full-size (the object's bbox is filled in and
+            # the rest is background), so the test would compare the whole slides
+            # and never see the small portion the object actually is.
+            _mx = register_coarse.coarse_register(
+                np.asarray(masked_t_ref),
+                np.asarray(masked_t_moving),
+                matched_area_ratio=1.0,
+                **{**default_kwargs, **kwargs}
+            )
+        else:
+            _mx = register_coarse.search_then_register(
+                np.asarray(masked_t_ref),
+                np.asarray(masked_t_moving),
+                **{**default_kwargs, **kwargs}
+            )
         c21l.coarse_affine_matrix = _mx
         if plot_shifts:
             import matplotlib.pyplot as plt
@@ -480,7 +496,7 @@ class MultiObjAligner:
         )
 
     def align_all_objects(self, plot_shift=True, refine=True, multi_res=True,
-                          min_num_blocks=25):
+                          min_num_blocks=25, windowed_coarse=True):
         block_mxs = []
         shift_masks = []
         object_affines = []
@@ -489,7 +505,7 @@ class MultiObjAligner:
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
             affine, shifts, mx, mask = self.align_object(
                 idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
-                min_num_blocks=min_num_blocks,
+                min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
             )
             object_affines.append(affine)
             object_shifts.append(shifts)

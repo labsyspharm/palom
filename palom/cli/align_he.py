@@ -30,6 +30,7 @@ def align_he(
     merge_gap: float = 500.0,
     exclude_objects: list = None,
     min_num_blocks: int = 25,
+    windowed_coarse: bool = True,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -153,6 +154,7 @@ def align_he(
             merge_gap=merge_gap,
             exclude_objects=exclude_objects,
             min_num_blocks=min_num_blocks,
+            windowed_coarse=windowed_coarse,
         )
         save_all_figs(
             out_dir=out_dir / "qc" / p2.stem, format="png", dpi=144, prefix=p2.name

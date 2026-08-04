@@ -340,6 +340,14 @@ FLAGS
               blocks in the coarse-to-fine multi-resolution pass
         Type: int
         Default: 25
+    --windowed_coarse=WINDOWED_COARSE
+        Help: Retry a tissue piece's coarse alignment with a sliding-window
+              search when its whole-image match comes back weak. Costs
+              nothing when the match is confident (the common case); set
+              False to cap runtime on a batch where some pieces are expected
+              to fail anyway
+        Type: bool
+        Default: True
     --only_coarse=ONLY_COARSE
         Help: Only perform coarse alignment
         Type: bool
