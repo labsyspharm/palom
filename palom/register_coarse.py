@@ -1,3 +1,18 @@
+"""Coarse, feature-based (ORB + RANSAC) affine registration of whole-slide images.
+
+`coarse_register` is the entry point; it dispatches between a whole-image route
+(`search_then_register`) and a sliding-window route (`windowed_search_then_register`)
+for "small-portion" pairs, where one scan images only a fraction of the other. All
+routes take two single-channel images and return a 2x3 affine mapping `img_right`
+(moving) -> `img_left` (ref), in full-resolution pixel coordinates of the inputs.
+
+Matching runs on downsampled copies and, before matching, searches a small space of
+intensity/orientation configurations (which image is histogram-matched into which,
+intensity inversion, vertical flip); cross-modality pairs (e.g. H&E vs. IF) and
+mirrored scans otherwise defeat ORB matching. Alignment confidence is scored with
+`register_util.score_overlap`.
+"""
+
 import itertools
 
 import cv2
@@ -8,6 +23,10 @@ from . import img_util, register_util, register
 
 
 def masked_match_histograms(img, ref_img, mask=None, ref_mask=None):
+    """Histogram-match `img` to `ref_img` using only masked (tissue) pixels; the
+    unmasked background is filled with the reference background's mean intensity.
+
+    Masks default to `img_util.entropy_mask` computed at full resolution."""
     # NOT the same as register_util.masked_match_histograms, despite the shared
     # name: this one accepts explicit masks and computes them at full resolution
     # when omitted, while register_util's takes no masks and derives them from a
@@ -27,6 +46,15 @@ def masked_match_histograms(img, ref_img, mask=None, ref_mask=None):
 
 
 def match_img_with_config(img1, img2, mask1, mask2, adjust_which, scalar, func):
+    """Apply one matching config to an image pair, returning the transformed
+    ``(img1, img2)``.
+
+    - ``adjust_which`` ("left"/"right"): which image is histogram-matched into the
+      other's intensity distribution (the other is left untouched);
+    - ``scalar`` (1.0/-1.0): inverts that image's intensity before matching, which
+      bridges dark- and light-background modalities;
+    - ``func`` (``np.array``/``np.flipud``): always applied to ``img2``, covering a
+      mirrored right image."""
     assert adjust_which in ("left", "right")
     if adjust_which == "right":
         return img1, func(masked_match_histograms(scalar * img2, img1, mask2, mask1))
@@ -42,6 +70,15 @@ def search_best_match_config(
     n_keypoints=2000,
     min_fold_increase=5,
 ):
+    """Search the 8 (`adjust_which`, `scalar`, flip) configs and return
+    ``(n_inliers, config)`` for the best one; `config` is consumable by
+    `match_img_with_config`.
+
+    Both images are downscaled so their largest side is ~`max_size`, and each config
+    is scored by the RANSAC inlier count of `cv2.estimateAffine2D` on its ORB matches.
+    The winner is trusted only if it beats the mean of the other configs by
+    `min_fold_increase`; otherwise the search restarts at twice the resolution, and
+    keeps doubling until the images are no longer downscaled."""
     shape_max = max(*img_left.shape, *img_right.shape)
     downsize_factor = int(np.ceil(shape_max / max_size))
 
@@ -104,6 +141,17 @@ def search_then_register(
     search_kwargs=None,
     return_match_count=False,
 ):
+    """Whole-image coarse registration: pick the best intensity/flip config, then
+    feature-match with `register.ensambled_match`.
+
+    Both images are downscaled so their largest side is ~`max_size` (`search_kwargs`
+    is forwarded to `search_best_match_config`, which downsamples further on its own);
+    the resulting affine is rescaled back to full-resolution coordinates. Returns the
+    2x3 affine mapping `img_right` -> `img_left`, or, with `return_match_count`, that
+    matrix and the number of RANSAC-inlier keypoints backing it.
+
+    Failure to match is non-fatal: an identity matrix and a zero match count are
+    returned with a warning."""
     search_kwargs = search_kwargs or {}
     img1 = img_left.astype("float32")
     img2 = img_right.astype("float32")
@@ -158,6 +206,8 @@ def search_then_register(
 
 
 def _tile_origins(length, window, step):
+    """Window start offsets tiling `length` with stride `step`, with the last window
+    flush against the far edge so the tail is never dropped."""
     starts = list(range(0, max(1, length - window + 1), step))
     if starts[-1] != length - window:
         starts.append(max(0, length - window))
@@ -204,8 +254,9 @@ def windowed_search_then_register(
     `search_then_register(smaller, tile)` on each (feature matching handles the
     per-tile flip/rotation/scale), composes with the tile offset to get a full-image
     affine, warps the larger image into the smaller one's frame, and keeps the tile
-    whose affine maximizes an intensity-permuted overlap NCC (tie-broken by matched-
-    keypoint count). Returns a 2x3 affine mapping `img_right` (moving) -> `img_left`
+    whose affine maximizes the whitened-intensity overlap correlation
+    (`register_util.score_overlap`, tie-broken by matched-keypoint count). Returns a
+    2x3 affine mapping `img_right` (moving) -> `img_left`
     (ref), matching `search_then_register`'s contract.
 
     When both nominal pixel sizes are given, they set which image is the larger
@@ -304,6 +355,8 @@ def _plot_windowed_qc(
     small, big, r0, c0, win, score, n_match, which_big,
     max_size, n_keypoints, auto_mask,
 ):
+    """QC figure for the windowed route: the winning tile's feature-match plot, with a
+    locator panel showing where that tile sits in `big`."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
 
@@ -365,9 +418,10 @@ def coarse_register(
       below `small_portion_area_ratio`, go straight to the windowed route (skip a
       whole-image attempt that would likely fail). When not given, it is computed from
       the nominal pixel sizes (`pixel_size_*`, um/pixel), which also set the tile size.
-    - Otherwise try whole-image `search_then_register`, then verify confidence with
-      the matched-keypoint count and an intensity-permuted overlap NCC; if either is
-      below threshold, fall back to the windowed route.
+    - Otherwise try whole-image `search_then_register`, then verify confidence with the
+      matched-keypoint count (`min_match_count`) and the whitened-intensity overlap
+      correlation (`register_util.score_overlap`, `min_ncc`); if either is below
+      threshold, fall back to the windowed route.
 
     When `plot_match_result` is True, a QC figure is drawn for the committed route
     only (the whole-image match plot, or the windowed match + locator plot)."""
