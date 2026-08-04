@@ -91,6 +91,34 @@ class MultiObjAligner:
         return np.array(self.aligner.moving_thumbnail)
     
     @cached_property
+    def match_config(self):
+        """The intensity/orientation config every object's coarse fit reuses.
+
+        Searched once from the *unmasked* whole-slide thumbnails: the config encodes
+        the modality relationship (which image is histogram-matched into which, and
+        whether it is intensity-inverted) and whether the scans are mirrored, all
+        properties of the slide pair rather than of one tissue piece. Re-searching per
+        object costs 8 ORB+RANSAC runs each (x N tiles on the windowed route) on a
+        thumbnail that is mostly background fill, where the search's `min_fold_increase`
+        test is weak and can settle on a different config than the whole slide did.
+
+        ponytail: config pinned from the whole-slide search; a piece placed mirrored
+        relative to the rest of the slide gets the wrong flip, its fit comes back near
+        identity, and `_pick_object_affine` drops it back to the baseline affine (the
+        object stays on the baseline, visible in its QC panel and scores). Upgrade when
+        seen in practice: re-search per object when the pinned-config fit scores weak.
+        """
+        n_inliers, config = register_coarse.search_best_match_config(
+            self.ref_thumbnail, self.moving_thumbnail
+        )
+        adjust_which, scalar, func = config
+        logger.info(
+            f"Pinned coarse match config for all objects: adjust={adjust_which},"
+            f" scalar={scalar:+.0f}, flip={func.__name__} ({n_inliers} inliers)"
+        )
+        return config
+
+    @cached_property
     def fill_value_ref_thumbnail(self):
         return np.mean(
             self.ref_thumbnail[~img_util.entropy_mask(self.ref_thumbnail)]
@@ -381,6 +409,8 @@ class MultiObjAligner:
             'n_keypoints': 10_000,
             'plot_match_result': True,
             'auto_mask': True,
+            # searched once for the slide pair, not per object -- see `match_config`
+            'config': self.match_config,
         }
         if windowed_coarse:
             # `coarse_register` adds a windowed retry when the whole-image match

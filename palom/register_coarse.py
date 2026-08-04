@@ -131,6 +131,18 @@ def search_best_match_config(
     )
 
 
+def _swap_config_sides(config):
+    """Rewrite a config for a call whose `img_left`/`img_right` are swapped.
+
+    Only `adjust_which` names a side, so flipping it keeps the histogram matching on
+    the same *image* when the argument order changes. `scalar` follows the adjusted
+    image, and `func` (applied to whichever image is `img_right`) lands on the other
+    side -- harmless, since a mirror is an involution: flipping either operand makes
+    the pair orientation-consistent."""
+    adjust_which, scalar, func = config
+    return ("left" if adjust_which == "right" else "right", scalar, func)
+
+
 def search_then_register(
     img_left,
     img_right,
@@ -140,6 +152,7 @@ def search_then_register(
     plot_match_result=True,
     search_kwargs=None,
     return_match_count=False,
+    config=None,
 ):
     """Whole-image coarse registration: pick the best intensity/flip config, then
     feature-match with `register.ensambled_match`.
@@ -149,6 +162,11 @@ def search_then_register(
     the resulting affine is rescaled back to full-resolution coordinates. Returns the
     2x3 affine mapping `img_right` -> `img_left`, or, with `return_match_count`, that
     matrix and the number of RANSAC-inlier keypoints backing it.
+
+    `config` (as returned by `search_best_match_config`) skips the 8-config search and
+    uses that config directly -- the config describes the image *pair* (modality
+    relationship and mirroring), so a caller aligning many crops of the same pair can
+    search once and pin the result.
 
     Failure to match is non-fatal: an identity matrix and a zero match count are
     returned with a warning."""
@@ -162,7 +180,8 @@ def search_then_register(
     img1 = img_util.cv2_downscale_local_mean(img1, downsize_factor)
     img2 = img_util.cv2_downscale_local_mean(img2, downsize_factor)
 
-    _, config = search_best_match_config(img1, img2, **search_kwargs)
+    if config is None:
+        _, config = search_best_match_config(img1, img2, **search_kwargs)
     _img1, _img2 = match_img_with_config(
         img1,
         img2,
@@ -246,6 +265,7 @@ def windowed_search_then_register(
     auto_mask=True,
     plot_match_result=False,
     n_workers=1,
+    config=None,
 ):
     """Coarse alignment for small-portion pairs (one scan images only a fraction of
     the other), where whole-image feature matching struggles.
@@ -282,6 +302,12 @@ def windowed_search_then_register(
     win = int(min(window, *big.shape))
     step = step or win
 
+    # the per-tile call is search_then_register(small, tile), so when `big` is
+    # img_left the tile sits on the right and the pinned config's sides are swapped
+    tile_config = config
+    if config is not None and left_big:
+        tile_config = _swap_config_sides(config)
+
     def _eval_tile(r0, c0):
         # NOTE: cropping to a tile is a form of masked feature matching (it
         # localizes ORB detection to a subregion so the small portion's
@@ -300,6 +326,7 @@ def windowed_search_then_register(
             auto_mask=auto_mask,
             plot_match_result=False,
             return_match_count=True,
+            config=tile_config,
         )
         # tile->small composed with big->tile gives big->small
         big2small = np.vstack([mx, [0, 0, 1]]) @ register_util.translate_mx(-c0, -r0)
@@ -344,6 +371,7 @@ def windowed_search_then_register(
             small, big, r0, c0, win, score, n_match,
             which_big="img_left" if left_big else "img_right",
             max_size=max_size, n_keypoints=n_keypoints, auto_mask=auto_mask,
+            config=tile_config,
         )
 
     # big->small back to moving(img_right)->ref(img_left)
@@ -353,7 +381,7 @@ def windowed_search_then_register(
 
 def _plot_windowed_qc(
     small, big, r0, c0, win, score, n_match, which_big,
-    max_size, n_keypoints, auto_mask,
+    max_size, n_keypoints, auto_mask, config=None,
 ):
     """QC figure for the windowed route: the winning tile's feature-match plot, with a
     locator panel showing where that tile sits in `big`."""
@@ -368,6 +396,7 @@ def _plot_windowed_qc(
         n_keypoints=n_keypoints,
         auto_mask=auto_mask,
         plot_match_result=True,
+        config=config,
     )
     fig = plt.gcf()
     main = fig.axes[0]
@@ -473,3 +502,25 @@ def coarse_register(
     return windowed_search_then_register(
         img_left, img_right, **win_kwargs, **search_kwargs
     )
+
+
+if __name__ == "__main__":
+    # `_swap_config_sides` must keep the histogram matching on the same image when
+    # the argument order flips -- the invariant the windowed route relies on when it
+    # reuses a pinned config for its (small, tile) calls.
+    rng = np.random.default_rng(0)
+    i1 = rng.random((32, 32), dtype="float32")
+    i2 = rng.random((32, 32), dtype="float32") * 2
+    m1, m2 = np.ones((32, 32), "bool"), np.ones((32, 32), "bool")
+
+    for scalar in (1.0, -1.0):
+        cfg = ("right", scalar, np.array)
+        a1, a2 = match_img_with_config(i1, i2, m1, m2, *cfg)
+        b1, b2 = match_img_with_config(i2, i1, m2, m1, *_swap_config_sides(cfg))
+        # same images, swapped positions: i2 stays the adjusted one in both
+        assert np.allclose(a1, b2), scalar
+        assert np.allclose(a2, b1), scalar
+
+    assert _swap_config_sides(("left", -1.0, np.flipud)) == ("right", -1.0, np.flipud)
+    assert _swap_config_sides(_swap_config_sides(cfg)) == cfg
+    print("register_coarse self-check OK")
