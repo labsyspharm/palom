@@ -24,6 +24,13 @@ def match_quantized(source, template, levels=65536):
     template = np.asarray(template)
     sf = np.ascontiguousarray(source.reshape(-1, 1), dtype=np.float32)
     tf = np.ascontiguousarray(template.reshape(-1, 1), dtype=np.float32)
+    if sf.size == 0 or tf.size == 0:
+        # Nothing to map: an empty source has an empty result, and an empty
+        # template offers no distribution to map onto. Both callers pass
+        # `img[mask]`, and a mask can select zero pixels -- a coarse-route tile
+        # landing entirely on background masks out to nothing. Without this,
+        # `cv2.normalize` returns None and the caller dies on `.astype`.
+        return source.astype("float32")
     tlo, thi, _, _ = cv2.minMaxLoc(tf)
     # scale each image onto [0, levels-1] with cv2 (multi-threaded); calcHist
     # floor-bins, so reuse the same floor for the apply index -> consistent
