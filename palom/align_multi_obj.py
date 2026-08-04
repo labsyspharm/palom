@@ -7,6 +7,7 @@ import numpy as np
 import skimage.measure
 import skimage.segmentation
 import skimage.transform
+from loguru import logger
 
 from . import align, align_multi_res, align_refine, img_util, register_coarse
 
@@ -127,6 +128,36 @@ class MultiObjAligner:
         }
         self.aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
 
+    # a typical WSI is ~2 cm across, so the default 500 µm merge gap is ~2.5% of
+    # the image width; used as the fallback when the physical scale is unknown
+    MERGE_GAP_IMAGE_FRACTION = 0.025
+
+    def _merge_radius(self, merge_gap, downscale_factor, mask_shape):
+        """Closing radius (in `mask` pixels) that bridges a `merge_gap` µm gap.
+
+        Falls back to a fraction of the image width when `reader1` has no real
+        pixel size: the placeholder 1 µm would make the radius wrong by the true
+        pixel size (3x too small on a 0.325 µm scan), and under-merging is the
+        dangerous direction -- it splits one piece into several, which is a hard
+        visible seam, where over-merging only gives the shift field more work.
+        """
+        if not self.reader1.has_pixel_size:
+            gap_px = self.MERGE_GAP_IMAGE_FRACTION * max(mask_shape)
+            logger.warning(
+                f"{self.reader1.path.name} has no pixel size metadata; merging"
+                f" tissue gaps up to {self.MERGE_GAP_IMAGE_FRACTION:.1%} of the"
+                f" image ({2 * 0.5 * gap_px:.0f} px) instead of {merge_gap:g} µm."
+                f" Pass `px_size1` for a physical merge gap"
+            )
+            return int(round(0.5 * gap_px))
+        small_px_um = (
+            self.reader1.pixel_size
+            * self.reader1.level_downsamples[self.level1]
+            * self.aligner.ref_thumbnail_down_factor
+            * downscale_factor
+        )
+        return int(round(0.5 * merge_gap / small_px_um))
+
     def segment_objects(self, downscale_factor=8, min_area=None,
                         merge_gap=500.0, segment=True, plot_segmentation=False):
         shape = self.ref_thumbnail.shape
@@ -153,13 +184,7 @@ class MultiObjAligner:
             # merging. `merge_gap` is in microns (resolution-independent); set 0
             # to disable. Closing with a radius-r disk fills gaps up to ~2*r.
             if merge_gap and merge_gap > 0:
-                small_px_um = (
-                    self.reader1.pixel_size
-                    * self.reader1.level_downsamples[self.level1]
-                    * self.aligner.ref_thumbnail_down_factor
-                    * downscale_factor
-                )
-                r = int(round(0.5 * merge_gap / small_px_um))
+                r = self._merge_radius(merge_gap, downscale_factor, mask.shape)
                 if r >= 1:
                     mask = skimage.morphology.binary_closing(
                         mask, skimage.morphology.disk(r)

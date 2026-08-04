@@ -18,9 +18,35 @@ class DaPyramidChannelReader:
     def __init__(self, pyramid: list[da.Array], channel_axis: int) -> None:
         self.pyramid = pyramid
         self.channel_axis = channel_axis
+        self._pixel_size_assumed = False
         if self.validate_pyramid(self.pyramid, self.channel_axis):
             self.pyramid = self.normalize_axis_order()
             self.pyramid = self.auto_format_pyramid(self.pyramid)
+
+    def _assume_pixel_size(self) -> float:
+        """Fall back to a placeholder pixel size, recording that it is a guess."""
+        logger.warning(
+            f"Unable to parse pixel size from {self.path.name};"
+            f" assuming 1 µm. Pass `pixel_size=` to set it manually"
+        )
+        self._pixel_size_assumed = True
+        self._pixel_size = 1
+        return self._pixel_size
+
+    @property
+    def has_pixel_size(self) -> bool:
+        """Whether `pixel_size` is real (parsed from metadata, or supplied by the
+        caller) rather than the 1 µm placeholder.
+
+        Anything converting a physical length (µm) into pixels must check this
+        first. A placeholder pixel size is not a harmless approximation: it is
+        wrong by the true pixel size -- 3x on a 0.325 µm scan -- so every derived
+        physical quantity is silently off by that factor. Prefer a
+        resolution-independent fallback, or skip the physical reasoning
+        altogether, over trusting the placeholder.
+        """
+        self.pixel_size  # resolve lazily; the fallback path sets the flag
+        return not self._pixel_size_assumed
 
     @staticmethod
     def validate_pyramid(pyramid: list[da.Array], channel_axis: int) -> bool:
@@ -181,12 +207,7 @@ class OmePyramidReader(DaPyramidChannelReader):
             self._pixel_size = px_size_micron
             return self._pixel_size
         except Exception:
-            logger.warning(
-                f"Unable to parse pixel size from {self.path.name};"
-                f" assuming 1 µm. Use `_pixel_size` to set it manually"
-            )
-            self._pixel_size = 1
-            return self._pixel_size
+            return self._assume_pixel_size()
 
 
 class SvsReader(DaPyramidChannelReader):
@@ -229,12 +250,7 @@ class SvsReader(DaPyramidChannelReader):
         try:
             return float(self.store._slide.properties["openslide.mpp-x"])
         except Exception:
-            logger.warning(
-                f"Unable to parse pixel size from {self.path.name};"
-                f" assuming 1 µm. Use `_pixel_size` to set it manually"
-            )
-            self._pixel_size = 1
-            return self._pixel_size
+            return self._assume_pixel_size()
 
 
 class QptiffPyramidReader(DaPyramidChannelReader):
@@ -317,12 +333,7 @@ class QptiffPyramidReader(DaPyramidChannelReader):
     def pixel_size(self) -> float:
         if self._pixel_size is not None:
             return self._pixel_size
-        logger.warning(
-            f"Unable to parse pixel size from {self.path.name};"
-            f" assuming 1 µm. Use `_pixel_size` to set it manually"
-        )
-        self._pixel_size = 1
-        return self._pixel_size
+        return self._assume_pixel_size()
 
     @property
     def channel_names(self) -> list[str]:
@@ -368,10 +379,10 @@ class VsiReader(DaPyramidChannelReader):
 
         if self._pixel_size is not None:
             return self._pixel_size
-        self._pixel_size = slideio_store._parse_pixel_size(self.store._slide)
-        if self._pixel_size == 1.0:
-            logger.warning(
-                f"Unable to parse pixel size from {self.path.name};"
-                f" assuming 1 µm. Use `_pixel_size` to set it manually"
-            )
+        px_size = slideio_store._parse_pixel_size(self.store._slide)
+        if px_size == 1.0:
+            # `_parse_pixel_size` returns 1.0 both when it fails and (in
+            # principle) for a real 1 µm scan; treat it as a guess
+            return self._assume_pixel_size()
+        self._pixel_size = px_size
         return self._pixel_size

@@ -585,6 +585,12 @@ def match_thumbnail_level(readers):
 
 
 def make_thumbnail_at_px_size(reader, px_size, channel):
+    if not reader.has_pixel_size:
+        logger.warning(
+            f"Requesting a {px_size:g} µm thumbnail from an image with no pixel"
+            f" size metadata; the 1 µm placeholder makes the resulting scale"
+            f" arbitrary. Pass `pixel_size=` to the reader"
+        )
     px = reader.pixel_size
     levels = sorted(reader.level_downsamples.keys())
     px_sizes = px * np.array([reader.level_downsamples[ll] for ll in levels])
