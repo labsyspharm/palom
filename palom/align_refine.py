@@ -26,8 +26,22 @@ from loguru import logger
 from . import block_affine, img_util, register
 
 
-def _block_edges(chunks):
-    return np.r_[0, np.cumsum(chunks)]
+def _window_edges(length, window_px):
+    """Edges of ~`window_px` windows exactly tiling `length`."""
+    n = max(1, int(round(length / window_px)))
+    return np.linspace(0, length, n + 1).round().astype(int)
+
+
+# Sampling window size, in level1 pixels. Window size trades against window
+# *count*: a bigger window makes each phase correlation more reliable but leaves
+# fewer of them inside the tissue, and RANSAC needs enough spread-out
+# correspondences to constrain the rotation / scale / shear terms. Measured on
+# the golden pairs, more-and-smaller wins: 1024px windows (24 correspondences,
+# 58% inliers) gave a median residual of 2.3px where 1360px (18, 44%) gave 3.3px
+# and 2048px collapsed to 9 correspondences, too few to accept at all. 1024 is
+# also what the dask-chunk grid produced before this was a parameter, so the
+# default preserves the behavior that was actually validated.
+DEFAULT_WINDOW_PX = 1024
 
 
 def _sample_tissue_blocks(tissue_grid, n_cells, min_tissue=0.5):
@@ -76,12 +90,22 @@ def refine_affine_by_block_translation(
     block_mask=None,
     plot=True,
     arrow_scaling="sqrt",
+    window_px=DEFAULT_WINDOW_PX,
 ):
     """Refine `aligner.coarse_affine_matrix` from block-wise PC translations.
 
+    `window_px` is the size of the windows this samples, on a grid of its own
+    rather than the reference's dask chunking, so the sampling no longer changes
+    when the chunking does. That matters because the chunking sets the
+    resolution of the downstream block shift field, which one may well want
+    finer, while this wants a window size that is already validated (see
+    `DEFAULT_WINDOW_PX`). Nothing here needs chunk alignment -- windows are read
+    as plain slices.
+
     `block_mask`, if given, is a boolean array of shape `aligner.ref_img.numblocks`
     that restricts block sampling to a region (e.g. a single tissue object);
-    only blocks where it is True are used.
+    only blocks where it is True are used. It is resampled onto the window grid,
+    so it stays in the caller's (dask-block) units whatever `window_px` is.
 
     `arrow_scaling` controls how the QC plot maps shift magnitude to arrow
     length ("sqrt", "linear" or "unit"); see `_plot_shift_field`.
@@ -96,22 +120,29 @@ def refine_affine_by_block_translation(
     A = aligner.affine_matrix  # full-res moving(x,y)->ref(x,y)
     inv_A = skimage.transform.AffineTransform(matrix=A)
 
-    ys, xs = _block_edges(ref.chunks[0]), _block_edges(ref.chunks[1])
-    nbi, nbj = ref.numblocks
-    block_px = int(min(np.median(ref.chunks[0]), np.median(ref.chunks[1])))
+    ys = _window_edges(ref.shape[0], window_px)
+    xs = _window_edges(ref.shape[1], window_px)
+    nbi, nbj = len(ys) - 1, len(xs) - 1
+    block_px = int(min(np.diff(ys).min(), np.diff(xs).min()))
     if block_px < 1024:
         logger.warning(
-            f"Refinement block size is ~{block_px}px; phase correlation is more"
-            f" reliable with larger blocks (set `ref_block_size` to ~2048-4096)"
+            f"Refinement window is ~{block_px}px (the image is only"
+            f" {'x'.join(map(str, ref.shape))}); phase correlation is more"
+            f" reliable with larger windows"
         )
 
-    # tissue fraction per block, from the coarse ref thumbnail resized to grid
+    # tissue fraction per window, from the coarse ref thumbnail resized to grid
     tissue = img_util.entropy_mask(
         np.asarray(aligner.ref_thumbnail).astype("float32")
     ).astype("float32")
     tissue_grid = cv2.resize(tissue, (nbj, nbi), interpolation=cv2.INTER_AREA)
     if block_mask is not None:
-        tissue_grid = tissue_grid * np.asarray(block_mask, dtype="float32")
+        # `block_mask` is in dask-block units; resample it onto the window grid
+        obj = cv2.resize(
+            np.asarray(block_mask, dtype="float32"), (nbj, nbi),
+            interpolation=cv2.INTER_AREA,
+        )
+        tissue_grid = tissue_grid * obj
     picks = _sample_tissue_blocks(tissue_grid, n_cells)
 
     # per-block translation -> (block center, shift) correspondences

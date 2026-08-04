@@ -28,7 +28,7 @@ def align_he(
     coarse_n_workers: int = 1,
     thumbnail_max_size: int = 2000,
     thumbnail_pixel_size: float = None,
-    ref_block_size: int = None,
+    shift_block_size: int = None,
     refine_coarse_affine: bool = False,
     only_coarse: bool = False,
     only_qc: bool = False,
@@ -69,17 +69,20 @@ def align_he(
     r1 = get_reader(p1)(p1, pixel_size=px_size1)
     r2 = get_reader(p2)(p2, pixel_size=px_size2)
 
-    if ref_block_size is not None:
-        # enlarge the refinement blocks by rechunking the reference pyramid's
-        # spatial axes; the moving image and MultiResAligner inherit this
-        # chunking. Larger blocks can stabilize shifts when small tiles lack
-        # features, at the cost of spatial resolution and memory per block.
+    if shift_block_size is not None:
+        # Resolution of the deformation field: one shift is measured per block,
+        # and the warp interpolates between block centers, so smaller blocks
+        # resolve finer local deformation. Set by rechunking the reference
+        # pyramid's spatial axes; the moving image and the per-level aligners
+        # inherit it. Smaller blocks carry less texture per phase correlation,
+        # but the multi-res pass already guards that -- a block whose shift is
+        # unreliable is rejected and the coarser level's value wins.
         r1.pyramid = [
-            level.rechunk({1: ref_block_size, 2: ref_block_size})
+            level.rechunk({1: shift_block_size, 2: shift_block_size})
             for level in r1.pyramid
         ]
     logger.info(
-        f"Reference refinement block size (`ref_block_size`={ref_block_size}):"
+        f"Shift-field block size (`shift_block_size`={shift_block_size}):"
         f" {r1.pyramid[0].chunksize[1:]} px at level 0"
     )
 
