@@ -92,6 +92,17 @@ def otsu_triangle_thresholds(img, nbins=256):
     but ~7x faster: the histogram (the expensive full-image pass) is built once
     with the multi-threaded `cv2.calcHist` and shared by both thresholds.
     """
+    if img.min() == img.max():
+        # A constant image has nothing to threshold, and both algorithms crash
+        # on it (otsu takes an argmax over an empty inter-class variance,
+        # triangle over an empty run between the histogram peak and its edge).
+        # Reached by the windowed coarse route: a tile that lands entirely on
+        # background masks out to zero tissue pixels and comes back filled with
+        # a single value. Returning the value itself makes the caller's
+        # `greater`/`less` comparison yield a uniformly empty mask, so the tile
+        # finds no keypoints and loses on score -- the right outcome.
+        v = float(img.min())
+        return v, v
     hist, centers = _cv2_image_histogram(img, nbins)
     otsu = skimage.filters.threshold_otsu(hist=(hist.astype(np.int64), centers))
     triangle = _threshold_triangle_from_hist(hist, centers)
