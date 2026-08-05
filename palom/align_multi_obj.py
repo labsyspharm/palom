@@ -70,13 +70,17 @@ class MultiObjAligner:
 
     def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
             exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25,
-            windowed_coarse=True, coarse_kwargs=None):
+            windowed_coarse=True, coarse_kwargs=None, plot=True):
+        # `plot=False` skips every QC figure. Worth having on a headless run:
+        # the figures are ~4 per object and nothing closes them until the caller
+        # sweeps them at the end (`cli.align_he.save_all_figs`), so on a slide
+        # with many pieces they are all resident at once.
         self.segment_objects(
             downscale_factor=downscale_factor, merge_gap=merge_gap,
-            segment=segment, plot_segmentation=True,
+            segment=segment, plot_segmentation=plot,
         )
         self.align_all_objects(
-            plot_shift=True, refine=refine, multi_res=multi_res,
+            plot_shift=plot, refine=refine, multi_res=multi_res,
             min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
             coarse_kwargs=coarse_kwargs,
         )
@@ -96,6 +100,8 @@ class MultiObjAligner:
         displacement warp.
         """
         self.aligner.coarse_affine_matrix = coarse_affine_matrix
+        # `bbox_moving_thumbnail` was derived from the previous baseline
+        self.__dict__.pop('_bbox_moving_thumbnail', None)
 
     @cached_property
     def aligner(self):
@@ -182,6 +188,22 @@ class MultiObjAligner:
             self.segment_objects(plot_segmentation=True)
         return self._bbox_ref_thumbnail
 
+    @property
+    def bbox_moving_thumbnail(self):
+        """`bbox_ref_thumbnail` mapped through the baseline coarse affine.
+
+        Computed for all objects at once and cached: `transform_bbox` transforms
+        the whole list, so calling it per object was quadratic in object count.
+        Invalidated by `segment_objects` (new boxes) and `seed_baseline_coarse`
+        (new affine).
+        """
+        if not hasattr(self, '_bbox_moving_thumbnail'):
+            self._bbox_moving_thumbnail = transform_bbox(
+                self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix,
+                shape=self.moving_thumbnail.shape,
+            )
+        return self._bbox_moving_thumbnail
+
     # a typical WSI is ~2 cm across, so the default 500 µm merge gap is ~2.5% of
     # the image width; used as the fallback when the physical scale is unknown
     MERGE_GAP_IMAGE_FRACTION = 0.025
@@ -262,6 +284,8 @@ class MultiObjAligner:
             regionprops['bbox-3']
         ]).T
         self._bbox_ref_thumbnail = bbox_ref_thumbnail[keep][order]
+        # derived from the boxes above; re-segmenting invalidates it
+        self.__dict__.pop('_bbox_moving_thumbnail', None)
         # label value of each (sorted) object, so per-object masks can be read
         # back from `segmentation_mask` (which keeps the original label values)
         self._object_labels = np.array(regionprops['label'])[keep][order]
@@ -417,10 +441,7 @@ class MultiObjAligner:
     def align_object(self, i, plot_shifts=True, refine=True, multi_res=True,
                      min_num_blocks=25, windowed_coarse=True, coarse_kwargs=None):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
-        rsm, rem, csm, cem = transform_bbox(
-            self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix,
-            shape=self.moving_thumbnail.shape,
-        )[i]
+        rsm, rem, csm, cem = self.bbox_moving_thumbnail[i]
 
         masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
         masked_t_ref[rs:re, cs:ce] = self.ref_thumbnail[rs:re, cs:ce]
@@ -428,7 +449,38 @@ class MultiObjAligner:
         masked_t_moving = np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
         masked_t_moving[rsm:rem, csm:cem] = self.moving_thumbnail[rsm:rem, csm:cem]
 
-        c21l = self.make_aligner()
+        mr = None
+        if multi_res:
+            # Built up front so its finest aligner can *be* `c21l`: it is at
+            # `level1` with the same thumbnails, so a separate `make_aligner()`
+            # only duplicated it -- and that duplicate cost a full thumbnail
+            # build per object, on top of the one per pyramid level `mr` already
+            # pays for.
+            mr = align_multi_res.MultiResAligner(
+                self.reader1, self.reader2, level1=self.level1,
+                channel1=self.channel1, channel2=self.channel2,
+                thumbnail_channel1=self.thumbnail_channel1,
+                thumbnail_channel2=self.thumbnail_channel2,
+                thumbnail_level1=self.thumbnail_level1,
+                thumbnails_pixel_size=self.thumbnails_pixel_size,
+                # match the standalone `multi_res` path so both use the same
+                # number of pyramid levels (the class default of 4 would add
+                # coarser levels)
+                min_num_blocks=min_num_blocks,
+            )
+            # `block_mask`, `shift_mask` and everything `combine_object_results`
+            # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
+            # unconditionally, so its finest aligner is the same grid. Pin it --
+            # a mismatch would surface far away, as an IndexError when
+            # `block_mask` indexes `shifts` below.
+            assert mr.levels[0] == self.level1, (
+                f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
+            )
+            c21l = mr.aligners[0]
+        else:
+            c21l = self.make_aligner()
+        # the coarse fit and the refinement both read these; the coarser levels
+        # of `mr` never touch a thumbnail, so masking only the finest is enough
         c21l.ref_thumbnail = masked_t_ref
         c21l.moving_thumbnail = masked_t_moving
 
@@ -451,7 +503,8 @@ class MultiObjAligner:
             # flip/intensity-invert and the reference-order search are handled
             # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
             default_kwargs = {
-                'plot_match_result': True,
+                # follows the caller's plotting choice rather than forcing it on
+                'plot_match_result': plot_shifts,
                 # searched once for the slide pair, not per object -- see `match_config`
                 'config': self.match_config,
             }
@@ -508,29 +561,11 @@ class MultiObjAligner:
         c21l.coarse_affine_matrix = dict(candidates)[chosen]
 
         shift_mask = da.from_array(block_mask, chunks=1)
-        if multi_res:
+        if mr is not None:
             # coarse-to-fine block shifts within this object, using its refined
-            # affine as the baseline; the per-level mask follows the object
-            mr = align_multi_res.MultiResAligner(
-                self.reader1, self.reader2, level1=self.level1,
-                channel1=self.channel1, channel2=self.channel2,
-                thumbnail_channel1=self.thumbnail_channel1,
-                thumbnail_channel2=self.thumbnail_channel2,
-                thumbnail_level1=self.thumbnail_level1,
-                thumbnails_pixel_size=self.thumbnails_pixel_size,
-                # match the standalone `multi_res` path so both use the same
-                # number of pyramid levels (the class default of 4 would add
-                # coarser levels)
-                min_num_blocks=min_num_blocks,
-            )
-            # `block_mask`, `shift_mask` and everything `combine_object_results`
-            # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
-            # unconditionally, so its finest aligner is the same grid. Pin it --
-            # a mismatch would surface far away, as an IndexError when
-            # `block_mask` indexes `shifts` below.
-            assert mr.levels[0] == self.level1, (
-                f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
-            )
+            # affine as the baseline; the per-level mask follows the object.
+            # `c21l` is `mr.aligners[0]`, so this fans the chosen affine out to
+            # the coarser levels (the setter's job, not a re-assignment).
             mr.coarse_affine_matrix = c21l.coarse_affine_matrix
             mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
             mr.constrain_shifts()

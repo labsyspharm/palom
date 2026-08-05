@@ -435,6 +435,25 @@ def _plot_windowed_qc(
     return fig
 
 
+def _fignums():
+    import matplotlib.pyplot as plt
+    return tuple(plt.get_fignums())
+
+
+def _close_figs_since(before):
+    """Close figures opened since `before`, so an abandoned route leaves none.
+
+    QC figures are collected by whoever saves them (`cli.align_he.save_all_figs`
+    sweeps every open figure), so a figure for a route that lost has to be
+    closed rather than merely ignored. `before=None` means nothing was plotted.
+    """
+    if before is None:
+        return
+    import matplotlib.pyplot as plt
+    for num in set(plt.get_fignums()) - set(before):
+        plt.close(num)
+
+
 def coarse_register(
     img_left,
     img_right,
@@ -491,21 +510,23 @@ def coarse_register(
             img_left, img_right, **win_kwargs, **search_kwargs
         )
 
+    # Plot on the first pass and discard the figure if we end up not taking this
+    # route, rather than re-running the match to draw it. The match is the
+    # expensive part (ORB + RANSAC at `n_keypoints`), it runs on every coarse
+    # registration in a run, and RANSAC is randomized -- so the re-run also drew
+    # a figure that need not agree with the matrix actually returned.
+    fignums_before = _fignums() if plot_match_result else None
     mx, n_match = search_then_register(
         img_left,
         img_right,
-        plot_match_result=False,
+        plot_match_result=plot_match_result,
         return_match_count=True,
         **search_kwargs,
     )
     ncc = register_util.score_overlap(img_left, img_right, np.vstack([mx, [0, 0, 1]]))
     if n_match >= min_match_count and ncc >= min_ncc:
-        if plot_match_result:
-            # re-run the committed whole-image result for its QC figure
-            search_then_register(
-                img_left, img_right, plot_match_result=True, **search_kwargs
-            )
         return mx
+    _close_figs_since(fignums_before)
     logger.info(
         f"whole-image coarse weak (matches={n_match}, ncc={ncc:.3f}); "
         "falling back to windowed route"
