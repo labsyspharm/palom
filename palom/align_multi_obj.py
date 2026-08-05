@@ -5,6 +5,7 @@ import cv2
 import dask.array as da
 import numpy as np
 import skimage.measure
+import skimage.morphology
 import skimage.segmentation
 import skimage.transform
 from loguru import logger
@@ -14,15 +15,25 @@ from . import (
 )
 
 
-def transform_bbox(bbox, affine_mx):
+def transform_bbox(bbox, affine_mx, shape=None):
+    """Map reference-frame bboxes through `affine_mx` into the moving frame.
+
+    `shape` clips the result to the moving image's bounds. Without it a bad
+    affine can hand back a box that lies entirely outside the image, whose slice
+    is empty -- which silently turns the masked thumbnail into a constant, and
+    the object's coarse fit into a registration against a blank image.
+    """
     tform_bbox = []
     tform = skimage.transform.AffineTransform(affine_mx)
+    hi = (None, None) if shape is None else (shape[0], shape[1])
     for rs, re, cs, ce in bbox:
         xx, yy = tform.inverse(
             list(itertools.product([cs, ce], [rs, re]))
         ).T
-        rs2, cs2 = np.clip(np.floor([yy.min(), xx.min()]).astype(int), 0, None)
+        rs2, cs2 = np.floor([yy.min(), xx.min()]).astype(int)
         re2, ce2 = np.ceil([yy.max(), xx.max()]).astype(int)
+        rs2, re2 = np.clip([rs2, re2], 0, hi[0])
+        cs2, ce2 = np.clip([cs2, ce2], 0, hi[1])
         tform_bbox.append([rs2, re2, cs2, ce2])
     return tform_bbox
 
@@ -44,10 +55,18 @@ class MultiObjAligner:
 
         self.channel1 = channel1
         self.channel2 = channel2
-        self.thumbnail_channel1 = thumbnail_channel1 or channel1
-        self.thumbnail_channel2 = thumbnail_channel2 or channel2
+        # `is None`, not `or`: channel 0 is a legitimate request
+        self.thumbnail_channel1 = (
+            channel1 if thumbnail_channel1 is None else thumbnail_channel1
+        )
+        self.thumbnail_channel2 = (
+            channel2 if thumbnail_channel2 is None else thumbnail_channel2
+        )
         self.thumbnail_level1 = thumbnail_level1
         self.thumbnails_pixel_size = thumbnails_pixel_size
+        # per-object QC rows, appended by `align_object`; initialized here so
+        # calling `align_object` on its own is not an AttributeError
+        self.object_qc = []
 
     def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
             exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25,
@@ -118,18 +137,33 @@ class MultiObjAligner:
         )
         return config
 
+    @staticmethod
+    def _background_fill_value(thumbnail):
+        """Mean background intensity, used to fill everything outside an object.
+
+        Falls back to the whole-image mean when `entropy_mask` claims the entire
+        frame: `np.mean` of an empty selection is NaN, and that NaN would fill
+        the masked thumbnail and poison every object's coarse fit rather than
+        failing loudly.
+        """
+        background = thumbnail[~img_util.entropy_mask(thumbnail)]
+        if background.size == 0:
+            logger.warning(
+                "Entropy mask found no background; filling outside each object"
+                " with the whole-image mean instead"
+            )
+            return np.mean(thumbnail)
+        return np.mean(background)
+
     @cached_property
     def fill_value_ref_thumbnail(self):
-        return np.mean(
-            self.ref_thumbnail[~img_util.entropy_mask(self.ref_thumbnail)]
-        )
-    
+        return self._background_fill_value(self.ref_thumbnail)
+
     @cached_property
     def fill_value_moving_thumbnail(self):
-        return np.mean(
-            self.moving_thumbnail[~img_util.entropy_mask(self.moving_thumbnail)]
-        )
-    
+        return self._background_fill_value(self.moving_thumbnail)
+
+
     # the baseline coarse/full-res affines live on `self.aligner` -- no copy is
     # kept here, and no local coarse defaults either: reading one before
     # `seed_baseline_coarse` falls through to `Aligner`'s lazy registration,
@@ -209,7 +243,7 @@ class MultiObjAligner:
                     mask = skimage.morphology.binary_closing(
                         mask, skimage.morphology.disk(r)
                     )
-            labeled = skimage.morphology.label(mask)
+            labeled = skimage.measure.label(mask)
             labeled = skimage.segmentation.expand_labels(labeled, 4)
 
         regionprops = skimage.measure.regionprops_table(
@@ -381,10 +415,11 @@ class MultiObjAligner:
         return chosen, scores
 
     def align_object(self, i, plot_shifts=True, refine=True, multi_res=True,
-                     min_num_blocks=25, windowed_coarse=True, **kwargs):
+                     min_num_blocks=25, windowed_coarse=True, coarse_kwargs=None):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = transform_bbox(
-            self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix
+            self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix,
+            shape=self.moving_thumbnail.shape,
         )[i]
 
         masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
@@ -396,47 +431,58 @@ class MultiObjAligner:
         c21l = self.make_aligner()
         c21l.ref_thumbnail = masked_t_ref
         c21l.moving_thumbnail = masked_t_moving
-        # flip/intensity-invert and the reference-order search are handled
-        # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
-        default_kwargs = {
-            'plot_match_result': True,
-            # searched once for the slide pair, not per object -- see `match_config`
-            'config': self.match_config,
-        }
-        coarse_kwargs = {**default_kwargs, **kwargs}
-        if windowed_coarse:
-            # `coarse_register` adds a windowed retry when the whole-image match
-            # comes back weak, which is an object's only chance of recovering
-            # from a failed fit -- `search_then_register` just returns identity.
-            # `matched_area_ratio=1.0` skips its physical-footprint test: both
-            # masked thumbnails are full-size (the object's bbox is filled in and
-            # the rest is background), so the test would compare the whole slides
-            # and never see the small portion the object actually is.
-            _mx = register_coarse.coarse_register(
-                np.asarray(masked_t_ref),
-                np.asarray(masked_t_moving),
-                matched_area_ratio=1.0,
-                **coarse_kwargs
-            )
-        else:
-            # no windowed tile search on this route, so nothing to parallelize
-            coarse_kwargs.pop('n_workers', None)
-            _mx = register_coarse.search_then_register(
-                np.asarray(masked_t_ref),
-                np.asarray(masked_t_moving),
-                **coarse_kwargs
-            )
-        c21l.coarse_affine_matrix = _mx
-        if plot_shifts:
-            import matplotlib.pyplot as plt
-            plt.gcf().suptitle(f"Object {i} (coarse alignment)")
 
         # candidates in increasing order of preference; the whole-image baseline
         # is the known-good fallback this object's own fit has to beat
         candidates = [
             ("baseline", np.asarray(self.baseline_coarse_affine_matrix)),
-            ("object", c21l.coarse_affine_matrix),
         ]
+        # An empty moving crop means the baseline affine puts this object off the
+        # moving image entirely, so `masked_t_moving` is a constant -- registering
+        # against it is a guaranteed-useless feature match, and `score_overlap`
+        # would reject its result anyway. Skip straight to the baseline.
+        if rem <= rsm or cem <= csm:
+            logger.warning(
+                f"Object {i}: the baseline affine maps its bbox outside the"
+                f" moving thumbnail; keeping the baseline coarse affine"
+            )
+            c21l.coarse_affine_matrix = self.baseline_coarse_affine_matrix
+        else:
+            # flip/intensity-invert and the reference-order search are handled
+            # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
+            default_kwargs = {
+                'plot_match_result': True,
+                # searched once for the slide pair, not per object -- see `match_config`
+                'config': self.match_config,
+            }
+            coarse_kwargs = {**default_kwargs, **(coarse_kwargs or {})}
+            if windowed_coarse:
+                # `coarse_register` adds a windowed retry when the whole-image match
+                # comes back weak, which is an object's only chance of recovering
+                # from a failed fit -- `search_then_register` just returns identity.
+                # `matched_area_ratio=1.0` skips its physical-footprint test: both
+                # masked thumbnails are full-size (the object's bbox is filled in and
+                # the rest is background), so the test would compare the whole slides
+                # and never see the small portion the object actually is.
+                _mx = register_coarse.coarse_register(
+                    np.asarray(masked_t_ref),
+                    np.asarray(masked_t_moving),
+                    matched_area_ratio=1.0,
+                    **coarse_kwargs
+                )
+            else:
+                # no windowed tile search on this route, so nothing to parallelize
+                coarse_kwargs.pop('n_workers', None)
+                _mx = register_coarse.search_then_register(
+                    np.asarray(masked_t_ref),
+                    np.asarray(masked_t_moving),
+                    **coarse_kwargs
+                )
+            c21l.coarse_affine_matrix = _mx
+            if plot_shifts:
+                import matplotlib.pyplot as plt
+                plt.gcf().suptitle(f"Object {i} (coarse alignment)")
+            candidates.append(("object", c21l.coarse_affine_matrix))
 
         # per-object block region from the segmentation label (not bbox), so
         # overlapping object bounding boxes don't cross-assign blocks
@@ -477,6 +523,14 @@ class MultiObjAligner:
                 # coarser levels)
                 min_num_blocks=min_num_blocks,
             )
+            # `block_mask`, `shift_mask` and everything `combine_object_results`
+            # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
+            # unconditionally, so its finest aligner is the same grid. Pin it --
+            # a mismatch would surface far away, as an IndexError when
+            # `block_mask` indexes `shifts` below.
+            assert mr.levels[0] == self.level1, (
+                f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
+            )
             mr.coarse_affine_matrix = c21l.coarse_affine_matrix
             mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
             mr.constrain_shifts()
@@ -508,6 +562,11 @@ class MultiObjAligner:
             "label": int(self._object_labels[i]),
             "n_blocks": int(in_object.sum()),
             "affine": chosen,
+            # what the object would have used absent a score collapse; recorded
+            # rather than re-derived, since the candidate list is not fixed (an
+            # object whose bbox lands off the moving image never gets an
+            # "object" candidate at all)
+            "preferred": candidates[-1][0],
             "scores": scores,
             "refine": refine_stats,
             "shift_median": float(np.median(magnitudes)) if magnitudes.size else None,
@@ -534,7 +593,10 @@ class MultiObjAligner:
             affine, shifts, mx, mask = self.align_object(
                 idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
                 min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
-                **(coarse_kwargs or {}),
+                # passed as a dict, not splatted: splatting let a coarse kwarg
+                # named `refine`/`multi_res`/... bind to `align_object`'s own
+                # parameter and never reach the registration
+                coarse_kwargs=coarse_kwargs,
             )
             object_affines.append(affine)
             object_shifts.append(shifts)
@@ -574,7 +636,12 @@ class MultiObjAligner:
         lines = [head, "  " + "-" * (len(head) - 2)]
         n_fallback = n_rejected = 0
         for r in qc:
-            preferred = "object+refine" if "object+refine" in r["scores"] else "object"
+            # `align_object` records what it actually preferred; fall back to
+            # the candidate order for rows built by hand (the self-checks)
+            preferred = r.get("preferred") or next(
+                name for name in ("object+refine", "object", "baseline")
+                if name in r["scores"]
+            )
             notes = []
             if r["affine"] != preferred:
                 notes.append(f"FELL BACK to {r['affine']}")
@@ -605,7 +672,12 @@ class MultiObjAligner:
         if exclude_objects is not None:
             for ii in exclude_objects:
                 to_include[ii] = False
-        assert to_include.sum() > 0
+        if not to_include.any():
+            raise ValueError(
+                f"`exclude_objects={sorted(exclude_objects)}` excludes all"
+                f" {len(self.shift_masks)} aligned object(s); at least one must"
+                f" remain"
+            )
         masks = self.shift_masks[to_include]
         mxs = self.block_mxs[to_include]
         passed = np.argmax(

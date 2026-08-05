@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import dask.array as da
 import skimage.exposure
+import skimage.filters
 import skimage.transform
 import sklearn.linear_model
 from loguru import logger
@@ -553,8 +554,12 @@ def get_aligner(
     thumbnail_channel1=None, thumbnail_channel2=None,
     thumbnails_pixel_size=None,
 ):
-    thumbnail_channel1 = thumbnail_channel1 or channel1
-    thumbnail_channel2 = thumbnail_channel2 or channel2
+    # `is None`, not `or`: channel 0 is a legitimate request, and `or` would
+    # silently swap it for `channelN`
+    if thumbnail_channel1 is None:
+        thumbnail_channel1 = channel1
+    if thumbnail_channel2 is None:
+        thumbnail_channel2 = channel2
     # `thumbnails_pixel_size` is the authoritative request for thumbnail
     # resolution: when given it wins outright over the thumbnail-level args
     # (both readers get thumbnails at the same physical pixel size).

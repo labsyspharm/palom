@@ -29,7 +29,8 @@ class MultiResAligner:
         thumbnail_channel1=None, thumbnail_channel2=None,
         thumbnail_level1=-1,
         thumbnails_pixel_size=None,
-        min_num_blocks=4
+        min_num_blocks=4,
+        min_block_px=None,
     ) -> None:
         self.reader1 = reader1
         self.reader2 = reader2
@@ -37,13 +38,22 @@ class MultiResAligner:
 
         self.channel1 = channel1
         self.channel2 = channel2
-        self.thumbnail_channel1 = thumbnail_channel1 or channel1
-        self.thumbnail_channel2 = thumbnail_channel2 or channel2
+        # `is None`, not `or`: channel 0 is a legitimate request
+        self.thumbnail_channel1 = (
+            channel1 if thumbnail_channel1 is None else thumbnail_channel1
+        )
+        self.thumbnail_channel2 = (
+            channel2 if thumbnail_channel2 is None else thumbnail_channel2
+        )
         self.thumbnail_level1 = thumbnail_level1
         self.thumbnails_pixel_size = thumbnails_pixel_size
 
         self.min_num_blocks = min_num_blocks
-        
+        self.min_block_px = (
+            self.MIN_BLOCK_PX if min_block_px is None else min_block_px
+        )
+
+
         self._make_aligners()
 
     @property
@@ -81,6 +91,14 @@ class MultiResAligner:
         for aligner in self.aligners:
             aligner.coarse_affine_matrix = mx
 
+    # A level is useless for block phase correlation once its blocks get tiny,
+    # regardless of how many of them there are. `min_num_blocks` does not catch
+    # this: `reader.auto_format_pyramid` halves the chunk size at every level,
+    # so a synthesized pyramid has the *same* block count at every level and
+    # only the block size shrinks (1024, 512, ... 32 px). A real tiled pyramid
+    # keeps its tile size, so this test never fires there.
+    MIN_BLOCK_PX = 64
+
     def _make_aligners(self):
         self.aligners = []
         # `levels` must be exactly the levels that produced `aligners` -- the
@@ -100,8 +118,18 @@ class MultiResAligner:
                 thumbnail_level2=None,
                 thumbnails_pixel_size=self.thumbnails_pixel_size,
             )
-            if c21l.num_blocks < self.min_num_blocks:
-                continue
+            # `level1` is the frame every caller reads results back in
+            # (`aligners[0].affine_matrix`, and the grid `MultiObjAligner`
+            # builds its block masks on), so it is kept unconditionally. The
+            # quality tests only decide which *coarser* levels are worth adding:
+            # dropping them all just degrades to a single-resolution alignment,
+            # where dropping `level1` used to leave `aligners` empty and crash
+            # with a bare IndexError from the `coarse_affine_matrix` getter.
+            if l1 != self.level1:
+                if c21l.num_blocks < self.min_num_blocks:
+                    continue
+                if min(c21l.ref_img.chunksize[-2:]) < self.min_block_px:
+                    continue
             # `constrain_shifts` maps grids across levels by block footprint,
             # which assumes every block of a level covers the same area -- only
             # the trailing chunk may be short. Regular for any zarr/tiff-backed
@@ -113,17 +141,29 @@ class MultiResAligner:
                 )
             self.aligners.append(c21l)
             self.levels.append(l1)
+        if not self.aligners:
+            raise ValueError(
+                f"level1={self.level1} is not a valid level of"
+                f" {type(self.reader1).__name__} (pyramid has"
+                f" {len(self.reader1.pyramid)} level(s))"
+            )
 
     def align(self, mask_fn=None):
         # `mask_fn(grid_shape) -> bool array` optionally restricts block-shift
         # computation to a region (e.g. one tissue object) at each level; it
         # must return a non-empty mask for every level so each aligner keeps
         # at least one finite block (an all-False mask crashes constrain).
-        self._aligner_shifts = []
-        # read once: the getter registers lazily when nobody assigned a matrix
-        coarse_affine_matrix = self.coarse_affine_matrix
+        # read once, then fan out through the setter: the getter registers
+        # lazily when nobody assigned a matrix, and doing that per level would
+        # register once per level
+        self.coarse_affine_matrix = self.coarse_affine_matrix
         for aligner in self.aligners:
-            aligner.coarse_affine_matrix = coarse_affine_matrix
+            # `constrain_shifts` reads `original_shifts` as the pristine shifts
+            # this run produced. Leaving a previous run's behind makes its
+            # `original_shifts == shifts` validity test compare across runs and
+            # silently mismark which blocks constrain moved.
+            if hasattr(aligner, 'original_shifts'):
+                del aligner.original_shifts
             if mask_fn is None:
                 aligner.compute_shifts()
             else:
@@ -131,14 +171,15 @@ class MultiResAligner:
                     np.asarray(mask_fn(aligner.grid_shape), dtype=bool), chunks=1
                 )
                 aligner.compute_shifts(mask=mask)
-            self._aligner_shifts.append(aligner.shifts)
 
     def constrain_shifts(self, exclude_result_levels=None):
         aligners = self.aligners
         for aligner in aligners:
-            # FIXME workaround to manually exclude computed shifts from certain levels
-            if not hasattr(aligner, 'original_shifts'):
-                aligner.constrain_shifts()
+            # `Aligner.constrain_shifts` is idempotent (it re-constrains from
+            # `original_shifts`), and `align` clears that attribute, so this is
+            # safe to call unconditionally. To suppress a level's result, use
+            # `exclude_result_levels` rather than withholding the constrain.
+            aligner.constrain_shifts()
         _valid_masks = [
             # a block is valid where constrain left it unchanged AND it is
             # finite -- masked-out / unconstrained blocks are inf and must not
@@ -210,7 +251,16 @@ class MultiResAligner:
         mask = np.max(self.valid_masks, axis=0)
 
         if max_radius is None:
-            max_radius = np.percentile(np.linalg.norm(shifts, axis=0)[mask], 99.5)
+            # `np.percentile` of an empty selection raises; an all-invalid grid
+            # (every level's constrain early-returned) is a legitimate, if
+            # useless, thing to plot
+            valid_magnitudes = np.linalg.norm(shifts, axis=0)[mask]
+            max_radius = (
+                np.percentile(valid_magnitudes, 99.5) if valid_magnitudes.size else 1.0
+            )
+        # a degenerate all-zero shift field would otherwise divide by zero in
+        # `shifts_to_lab`
+        max_radius = max(float(max_radius), np.finfo("float32").eps)
 
         lab = flow.shifts_to_lab(
             shifts,
@@ -218,10 +268,15 @@ class MultiResAligner:
         )
         rgb = skimage.color.lab2rgb(lab, channel_axis=0)
         
-        thumbnail = self.reader1.pyramid[-1][self.thumbnail_channel1].compute()
+        # backdrop only -- the coarsest level, independent of `thumbnail_level1`
+        # (which selects the *registration* thumbnail, and may be a fixed
+        # physical pixel size rather than a level at all)
+        thumbnail_level = len(self.reader1.pyramid) - 1
+        thumbnail = self.reader1.pyramid[thumbnail_level][
+            self.thumbnail_channel1
+        ].compute()
         thumbnail_extent = flow.get_img_extent(
-            thumbnail.shape,
-            self.reader1.level_downsamples[len(self.reader1.pyramid)-1]
+            thumbnail.shape, self.reader1.level_downsamples[thumbnail_level]
         )
         
         flow_extent = flow.get_img_extent(shape, self.block_footprints[0][0])

@@ -1,6 +1,7 @@
 import numpy as np
 import dask.array as da
 import cv2
+import skimage.exposure
 import skimage.transform
 import skimage.filters
 import skimage.morphology
