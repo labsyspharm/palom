@@ -2,7 +2,21 @@ import dask.array as da
 import numpy as np
 
 from . import align
-from . import img_util
+
+
+def map_to_finest_grid(arr, scale, out_shape):
+    """Resample a per-block array onto the finest aligner's block grid.
+
+    `scale` is the (row, col) ratio of this level's block *footprint* -- the
+    level-0 area one block covers -- to the finest level's. Every level's block
+    grid starts at pixel 0 of the same image, so a fine block maps exactly to
+    the coarse block containing its center. That reduces to a plain tile-repeat
+    when the ratio is an integer and stays correct when it is not.
+    """
+    (nr, nc), (h, w) = arr.shape, out_shape
+    rr = np.minimum(((np.arange(h) + 0.5) / scale[0]).astype(int), nr - 1)
+    cc = np.minimum(((np.arange(w) + 0.5) / scale[1]).astype(int), nc - 1)
+    return arr[np.ix_(rr, cc)]
 
 
 class MultiResAligner:
@@ -40,6 +54,21 @@ class MultiResAligner:
         ]
 
     @property
+    def block_footprints(self):
+        """(row, col) level-0 pixels covered by one block, per aligner level.
+
+        Not the same as `downsample_factors`: a block's footprint is chunk size
+        *times* downsample, and chunk size is not guaranteed constant across
+        pyramid levels (`reader.auto_format_pyramid` halves it at every level,
+        which keeps the footprint -- and hence the grid -- identical at all
+        levels). Only the footprint ratio maps one level's grid onto another's.
+        """
+        return [
+            np.multiply(al.ref_img.chunksize[-2:], dd)
+            for al, dd in zip(self.aligners, self.downsample_factors)
+        ]
+
+    @property
     def coarse_affine_matrix(self):
         # no separate copy is kept here: the finest aligner owns the matrix and
         # `align` propagates it to the coarser levels. `MultiObjAligner` always
@@ -73,6 +102,15 @@ class MultiResAligner:
             )
             if c21l.num_blocks < self.min_num_blocks:
                 continue
+            # `constrain_shifts` maps grids across levels by block footprint,
+            # which assumes every block of a level covers the same area -- only
+            # the trailing chunk may be short. Regular for any zarr/tiff-backed
+            # pyramid; a rechunked or sliced input could break it.
+            for chunks in c21l.ref_img.chunks:
+                assert len(set(chunks[:-1])) <= 1, (
+                    f"level {l1} has irregular chunks {chunks}; cross-level"
+                    " block mapping requires uniformly sized blocks"
+                )
             self.aligners.append(c21l)
             self.levels.append(l1)
 
@@ -110,36 +148,38 @@ class MultiResAligner:
             for al in aligners
         ]
         h, w = aligners[0].grid_shape
-        # tile-repeat counts mapping each level's grid back onto the finest
-        # aligner level; these must be exact integers, so round (not truncate)
-        # to stay robust to any residual float drift in the downsample factors
-        downsample_factors = [
-            round(dd / self.downsample_factors[0])
-            for dd in self.downsample_factors
+        # Two distinct ratios, easily conflated: `grid_scales` maps a level's
+        # block grid onto the finest one (ratio of block footprints), while
+        # `pixel_scales` converts a shift measured in that level's pixels to
+        # the finest level's pixels (ratio of downsample factors). They agree
+        # only when every level shares a chunk size, and neither is guaranteed
+        # to be an integer (a non-integer downsample factor is a warning in
+        # `reader.level_downsamples`, not an error).
+        footprints = self.block_footprints
+        grid_scales = [np.divide(ff, footprints[0]) for ff in footprints]
+        pixel_scales = [
+            dd / self.downsample_factors[0] for dd in self.downsample_factors
         ]
         valid_masks = [
-            img_util.repeat_2d(mm.reshape(aa.grid_shape), (dd, dd))[:h, :w]
-            for dd, mm, aa in zip(
-                downsample_factors, _valid_masks, aligners
-            ) 
+            map_to_finest_grid(mm.reshape(aa.grid_shape), ss, (h, w))
+            for ss, mm, aa in zip(grid_scales, _valid_masks, aligners)
         ]
         idxs = [
-            img_util.repeat_2d(
-                np.arange(aa.shifts.shape[0]).reshape(aa.grid_shape), 
-                (dd, dd)
-            )[:h, :w]
-            for aa, dd in zip(aligners, downsample_factors)
+            map_to_finest_grid(
+                np.arange(aa.shifts.shape[0]).reshape(aa.grid_shape), ss, (h, w)
+            )
+            for aa, ss in zip(aligners, grid_scales)
         ]
         exclude_result_levels = exclude_result_levels or []
         for level in exclude_result_levels:
             valid_masks[level][:] = False
         mask = np.argmax(valid_masks, axis=0)
         out = np.zeros((2, *aligners[0].grid_shape))
-        for ii, (aa, idx, dd) in enumerate(
-            zip(aligners, idxs, downsample_factors)
+        for ii, (aa, idx, ss) in enumerate(
+            zip(aligners, idxs, pixel_scales)
         ):
             out[np.array([mask == ii]*2)] = (
-                dd * aa.shifts[idx[mask == ii]].T.flatten()
+                ss * aa.shifts[idx[mask == ii]].T.flatten()
             )
         # Block shifts are residuals on top of the affine, so `shift == 0` means
         # "defer to the affine". Residual inf only survives at outside-object
@@ -153,9 +193,9 @@ class MultiResAligner:
         self.idxs = idxs
 
     def plot_shifts(self, max_radius=None):
-        import matplotlib.pyplot as plt
-        import matplotlib.figure
         import matplotlib.colors
+        import matplotlib.figure
+        import matplotlib.pyplot as plt
         import skimage.color
         from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -184,10 +224,7 @@ class MultiResAligner:
             self.reader1.level_downsamples[len(self.reader1.pyramid)-1]
         )
         
-        flow_extent = flow.get_img_extent(
-            shape,
-            self.downsample_factors[0] * self.reader1.pyramid[self.levels[0]].chunksize[1]
-        )
+        flow_extent = flow.get_img_extent(shape, self.block_footprints[0][0])
 
         w, h = matplotlib.figure.figaspect(shape[0] / (shape[1] * 3))
         fig = plt.figure(figsize=(w, h))
