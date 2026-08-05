@@ -15,18 +15,54 @@ from . import pyramid as pyramid_util
 
 
 class DaPyramidChannelReader:
-    def __init__(self, pyramid: list[da.Array], channel_axis: int) -> None:
+    def __init__(
+        self,
+        pyramid: list[da.Array],
+        channel_axis: int,
+        pixel_size: float | None = None,
+    ) -> None:
         self.pyramid = pyramid
         self.channel_axis = channel_axis
         self._pixel_size_assumed = False
+        # This class is usable on its own, over an in-memory or zarr-backed
+        # pyramid with no file behind it. Everything that reads a pixel size
+        # goes through the property below, and everything that names the reader
+        # goes through `source_name`, so neither needs a `path`. Subclasses set
+        # both before calling up -- including a `_pixel_size` they parsed out of
+        # the file -- so this only fills in what is missing.
+        if not hasattr(self, "path"):
+            self.path = None
+        if getattr(self, "_pixel_size", None) is None:
+            self._pixel_size = pixel_size
         if self.validate_pyramid(self.pyramid, self.channel_axis):
             self.pyramid = self.normalize_axis_order()
             self.pyramid = self.auto_format_pyramid(self.pyramid)
 
+    @property
+    def source_name(self) -> str:
+        """Short name for this reader in log messages.
+
+        The file name when there is a file, the class name otherwise -- a
+        pathless reader is a legitimate input, not an error, so messages about
+        it must not be the thing that raises.
+        """
+        return type(self).__name__ if self.path is None else self.path.name
+
+    @property
+    def pixel_size(self) -> float:
+        """Pixel size in µm: the caller's value, else the 1 µm placeholder.
+
+        Subclasses that can parse a real one from the file override this and
+        fall through to `_assume_pixel_size` when parsing fails.
+        """
+        if self._pixel_size is not None:
+            return self._pixel_size
+        return self._assume_pixel_size()
+
     def _assume_pixel_size(self) -> float:
         """Fall back to a placeholder pixel size, recording that it is a guess."""
         logger.warning(
-            f"Unable to parse pixel size from {self.path.name};"
+            f"Unable to parse pixel size from {self.source_name};"
             f" assuming 1 µm. Pass `pixel_size=` to set it manually"
         )
         self._pixel_size_assumed = True
@@ -329,11 +365,8 @@ class QptiffPyramidReader(DaPyramidChannelReader):
 
         return da_pyramid, channel_names, pixel_size
 
-    @property
-    def pixel_size(self) -> float:
-        if self._pixel_size is not None:
-            return self._pixel_size
-        return self._assume_pixel_size()
+    # `pixel_size` is the base implementation: `_parse_qptiff` already resolved
+    # `_pixel_size`, so there is nothing left to parse lazily
 
     @property
     def channel_names(self) -> list[str]:

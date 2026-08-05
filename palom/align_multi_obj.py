@@ -234,7 +234,7 @@ class MultiObjAligner:
         if not self.reader1.has_pixel_size:
             gap_px = self.MERGE_GAP_IMAGE_FRACTION * max(mask_shape)
             logger.warning(
-                f"{self.reader1.path.name} has no pixel size metadata; merging"
+                f"{self.reader1.source_name} has no pixel size metadata; merging"
                 f" tissue gaps up to {self.MERGE_GAP_IMAGE_FRACTION:.1%} of the"
                 f" image ({2 * 0.5 * gap_px:.0f} px) instead of {merge_gap:g} µm."
                 f" Pass `px_size1` for a physical merge gap"
