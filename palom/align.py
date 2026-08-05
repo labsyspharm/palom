@@ -544,7 +544,7 @@ class Aligner:
 
 def get_aligner(
     reader1, reader2,
-    level1=0, level2=0,
+    level1=0,
     channel1=0, channel2=0,
     thumbnail_level1=-1, thumbnail_level2=-1,
     thumbnail_channel1=None, thumbnail_channel2=None,
@@ -561,12 +561,23 @@ def get_aligner(
     # size against the other's 1 um placeholder is worse than no size at all
     known_px_size = reader1.has_pixel_size and reader2.has_pixel_size
 
+    # reader2's working level is not the caller's choice: it is the coarsest
+    # level whose pixels are still no coarser than reader1's `level1`, so the
+    # moving image is read at the resolution the reference grid can use and
+    # never below it. Comparing the two physically requires both real pixel
+    # sizes -- against a placeholder, level 0 is the safe answer.
+    level2 = 0
+    if known_px_size:
+        level2 = level_at_px_size(
+            reader2, reader1.pixel_size * reader1.level_downsamples[level1]
+        )
+
     if thumbnails_pixel_size is not None:
         px = thumbnails_pixel_size
         thumbnail1 = make_thumbnail_at_px_size(reader1, px, thumbnail_channel1)
         thumbnail2 = make_thumbnail_at_px_size(reader2, px, thumbnail_channel2)
 
-        return Aligner(
+        aligner = Aligner(
             reader1.read_level_channels(level1, channel1),
             reader2.read_level_channels(level2, channel2),
             thumbnail1,
@@ -576,27 +587,53 @@ def get_aligner(
             px if known_px_size else None,
             px if known_px_size else None,
         )
-
-    if None in [thumbnail_level1, thumbnail_level2]:
-        thumbnail_level1, thumbnail_level2 = match_thumbnail_level(
-            [reader1, reader2]
+    else:
+        if None in [thumbnail_level1, thumbnail_level2]:
+            thumbnail_level1, thumbnail_level2 = match_thumbnail_level(
+                [reader1, reader2]
+            )
+        if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
+        if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
+        thumbnail_px1 = thumbnail_px2 = None
+        if known_px_size:
+            thumbnail_px1 = reader1.pixel_size * reader1.level_downsamples[thumbnail_level1]
+            thumbnail_px2 = reader2.pixel_size * reader2.level_downsamples[thumbnail_level2]
+        aligner = Aligner(
+            reader1.read_level_channels(level1, channel1),
+            reader2.read_level_channels(level2, channel2),
+            reader1.read_level_channels(thumbnail_level1, thumbnail_channel1),
+            reader2.read_level_channels(thumbnail_level2, thumbnail_channel2),
+            reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1],
+            reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2],
+            thumbnail_px1,
+            thumbnail_px2,
         )
-    if thumbnail_level1 <= -1: thumbnail_level1 += len(reader1.pyramid)
-    if thumbnail_level2 <= -1: thumbnail_level2 += len(reader2.pyramid)
-    thumbnail_px1 = thumbnail_px2 = None
-    if known_px_size:
-        thumbnail_px1 = reader1.pixel_size * reader1.level_downsamples[thumbnail_level1]
-        thumbnail_px2 = reader2.pixel_size * reader2.level_downsamples[thumbnail_level2]
-    return Aligner(
-        reader1.read_level_channels(level1, channel1),
-        reader2.read_level_channels(level2, channel2),
-        reader1.read_level_channels(thumbnail_level1, thumbnail_channel1),
-        reader2.read_level_channels(thumbnail_level2, thumbnail_channel2),
-        reader1.level_downsamples[thumbnail_level1] / reader1.level_downsamples[level1],
-        reader2.level_downsamples[thumbnail_level2] / reader2.level_downsamples[level2],
-        thumbnail_px1,
-        thumbnail_px2,
-    )
+    # the levels the affine was fit at: anything warping a whole pyramid level
+    # (rather than `aligner.moving_img`) must read `reader2.pyramid[level2]`,
+    # or the affine and the pixels it is applied to are a power of two apart
+    aligner.level1, aligner.level2 = level1, level2
+    return aligner
+
+
+def level_at_px_size(reader, px_size, rtol=1e-3):
+    """The coarsest pyramid level whose pixel size is still <= `px_size`.
+
+    The one place a physical pixel size becomes a pyramid level. Taking the
+    coarsest level that is not coarser than the target reads the fewest pixels
+    without giving up resolution the target asked for; when every level is
+    coarser than the target, level 0 is the closest available.
+
+    `rtol` absorbs the float drift in `level_downsamples` (derived from level
+    shapes that round up *or* down), so a level that is nominally an exact
+    match counts as one instead of being rejected by a strict comparison and
+    silently costing a 4x-larger read.
+    """
+    levels = sorted(reader.level_downsamples)
+    px_sizes = np.array([
+        reader.pixel_size * reader.level_downsamples[ll] for ll in levels
+    ])
+    not_coarser = np.nonzero(px_sizes <= px_size * (1 + rtol))[0]
+    return int(levels[not_coarser[-1]]) if len(not_coarser) else 0
 
 
 def match_thumbnail_level(readers):
@@ -624,27 +661,18 @@ def make_thumbnail_at_px_size(reader, px_size, channel):
             f" size metadata; the 1 µm placeholder makes the resulting scale"
             f" arbitrary. Pass `pixel_size=` to the reader"
         )
-    px = reader.pixel_size
-    levels = sorted(reader.level_downsamples.keys())
-    px_sizes = px * np.array([reader.level_downsamples[ll] for ll in levels])
+    # only ever downsample to reach `px_size` (never upsample), except when the
+    # target is finer than level 0 and there is nothing to downsample from
+    level = level_at_px_size(reader, px_size)
+    level_px_size = reader.pixel_size * reader.level_downsamples[level]
+    factor = level_px_size / px_size
 
-    # pick the finest pyramid level whose pixel size is still <= the target, so we
-    # only ever downsample to reach `px_size` (never upsample); if the target is
-    # coarser than every level, use the coarsest level
-    coarser = px_sizes > px_size
-    if not coarser.any():
-        level = len(px_sizes) - 1
-    else:
-        level = int(np.argmax(coarser))
-        if level > 0:
-            level -= 1
-
-    factor = px_sizes[level] / px_size
-
-    if factor > 1:
+    # `level_at_px_size`'s tolerance can accept a level a hair coarser than the
+    # target; that is a match, not an upsample, so warn only past the tolerance
+    if factor > 1.001:
         logger.warning(
             f"Requested thumbnail pixel size {px_size:g} µm is finer than the"
-            f" finest available level ({px_sizes[level]:g} µm); upsampling"
+            f" finest available level ({level_px_size:g} µm); upsampling"
             f" {factor:.2f}x."
         )
 

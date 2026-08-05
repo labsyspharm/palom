@@ -5,23 +5,6 @@ from . import align
 from . import img_util
 
 
-def match_levels(r1, r2):
-    px_sizes_1 = [
-        r1.pixel_size * r1.level_downsamples[i]
-        for i in range(len(r1.pyramid))
-    ]
-    px_sizes_2 = [
-        r2.pixel_size * r2.level_downsamples[i]
-        for i in range(len(r2.pyramid))
-    ]
-    return [
-        (idx, np.where(np.array(px_sizes_2) < px1)[0].max())
-        if np.min(px_sizes_2) < px1
-        else (idx, 0)
-        for idx, px1 in enumerate(px_sizes_1)
-    ]
-
-
 class MultiResAligner:
 
     def __init__(
@@ -57,12 +40,6 @@ class MultiResAligner:
         ]
 
     @property
-    def level_pairs(self):
-        levels = match_levels(self.reader1, self.reader2)
-        filtered = filter(lambda x: x[0] >= self.level1, levels)
-        return list(filtered)
-    
-    @property
     def coarse_affine_matrix(self):
         # no separate copy is kept here: the finest aligner owns the matrix and
         # `align` propagates it to the coarser levels. `MultiObjAligner` always
@@ -76,18 +53,17 @@ class MultiResAligner:
             aligner.coarse_affine_matrix = mx
 
     def _make_aligners(self):
-        self.level2 = self.level_pairs[0][1]
         self.aligners = []
         # `levels` must be exactly the levels that produced `aligners` -- the
         # two are zipped in `constrain_shifts` and `plot_shifts`. Deriving it
         # from `reader1.pyramid[x].numblocks` instead double-counts the channel
         # axis (readers chunk it to 1), which keeps levels that get no aligner.
         self.levels = []
-        for l1, l2 in self.level_pairs:
+        for l1 in range(self.level1, len(self.reader1.pyramid)):
             c21l = align.get_aligner(
-                self.reader1, self.reader2, 
+                self.reader1, self.reader2,
                 channel1=self.channel1, channel2=self.channel2,
-                level1=l1, level2=l2,
+                level1=l1,
                 thumbnail_channel1=self.thumbnail_channel1,
                 thumbnail_channel2=self.thumbnail_channel2,
                 thumbnail_level1=self.thumbnail_level1,

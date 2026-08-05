@@ -83,12 +83,10 @@ def align_he(
     )
 
     LEVEL1 = 0
-    LEVEL2 = 0
     aligner = palom.align.get_aligner(
         r1,
         r2,
         level1=LEVEL1,
-        level2=LEVEL2,
         channel1=channel1,
         channel2=channel2,
         # when thumbnail_pixel_size is set it wins and builds both thumbnails at
@@ -127,7 +125,8 @@ def align_he(
 
     if viz_coarse_napari:
         _ = viz_coarse(
-            r1, r2, LEVEL1, LEVEL2, channel1, channel2, aligner.affine_matrix
+            r1, r2, LEVEL1, aligner.level2, channel1, channel2,
+            aligner.affine_matrix
         )
 
     if not only_coarse:
@@ -162,9 +161,12 @@ def align_he(
         block_mx = mo_aligner.block_affine_matrices_da
 
     if not only_qc:
-        mx = aligner.affine_matrix
+        # the moving level must be the one whose frame `mx` was fit in -- the
+        # two aligners derive it identically, but read it off whichever one
+        # produced the matrix rather than assuming they agree
+        mx, level2 = aligner.affine_matrix, aligner.level2
         if not only_coarse:
-            mx = block_mx
+            mx, level2 = block_mx, mo_aligner.level2
 
         if displacement_warp and not only_coarse:
             # seam-free, mask-constrained warp: each object gets its own
@@ -172,7 +174,7 @@ def align_he(
             # non-segmented case), composited per pixel by the labeled
             # segmentation mask.
             mosaic = mo_aligner.displacement_transformed_moving_img(
-                r2.pyramid[LEVEL2],
+                r2.pyramid[level2],
                 sigma_blocks=smooth_shifts_sigma,
                 exclude_objects=exclude_objects,
                 interpolation=warp_interpolation,
@@ -181,7 +183,7 @@ def align_he(
             # `only_coarse` has no block shifts, so there is no displacement
             # field to build -- the coarse affine warp is the only option
             mosaic = palom.align.block_affine_transformed_moving_img(
-                ref_img=aligner.ref_img, moving_img=r2.pyramid[LEVEL2], mxs=mx
+                ref_img=aligner.ref_img, moving_img=r2.pyramid[level2], mxs=mx
             )
 
         if (mosaic.shape[0] == 3) & (intensity_in_range is not None):
@@ -340,7 +342,7 @@ if __name__ == "__main__":
 
     sys.exit(main())
 
-    """
+    r"""
     Example 1: inspect coarse alignment using napari
     python align_he.py run-pair\
         Z:\RareCyte-S3\P54_CRCstudy_Bridge\P54_S33_Full_Or6_A31_C90c_HMS@20221025_001610_632297.ome.tiff \

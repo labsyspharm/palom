@@ -32,7 +32,7 @@ class MultiObjAligner:
     def __init__(
         self,
         reader1, reader2,
-        level1=0, level2=None,
+        level1=0,
         channel1=0, channel2=0,
         thumbnail_channel1=None, thumbnail_channel2=None,
         thumbnail_level1=-1,
@@ -41,7 +41,6 @@ class MultiObjAligner:
         self.reader1 = reader1
         self.reader2 = reader2
         self.level1 = level1
-        self.level2 = level2 or self._set_level2()
 
         self.channel1 = channel1
         self.channel2 = channel2
@@ -301,14 +300,20 @@ class MultiObjAligner:
             ax2.add_patch(mpathc2)
         return fig
 
-    def _set_level2(self):
-        lv_pairs = align_multi_res.match_levels(self.reader1, self.reader2)
-        return lv_pairs[self.level1][1]
-    
+    @property
+    def level2(self):
+        """The reader2 level the object affines were fit at.
+
+        Picked by `get_aligner` from physical pixel size; exposed because a
+        caller warping a whole pyramid level with these affines must read
+        `reader2.pyramid[level2]` and not assume level 0.
+        """
+        return self.aligner.level2
+
     def make_aligner(self):
         return align.get_aligner(
             self.reader1, self.reader2,
-            level1=self.level1, level2=self.level2,
+            level1=self.level1,
             channel1=self.channel1, channel2=self.channel2,
             thumbnail_level1=self.thumbnail_level1,
             thumbnail_level2=None,
