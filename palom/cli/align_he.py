@@ -154,6 +154,9 @@ def align_he(
             exclude_objects=exclude_objects,
             min_num_blocks=min_num_blocks,
             windowed_coarse=windowed_coarse,
+            # the same coarse budget/workers the baseline fit above used, so
+            # every coarse registration in the run is the same registration
+            coarse_kwargs=dict(n_keypoints=n_keypoints, n_workers=coarse_n_workers),
         )
         save_all_figs(
             out_dir=out_dir / "qc" / p2.stem, format="png", dpi=144, prefix=p2.name

@@ -143,11 +143,20 @@ def _swap_config_sides(config):
     return ("left" if adjust_which == "right" else "right", scalar, func)
 
 
+# The one coarse keypoint budget, whole-slide and per-object. Callers used to
+# each carry their own (2 000 in `Aligner`, 20 000 for the multi-object
+# baseline, 10 000 per object, 5 000 here), which meant the CLI, a bare
+# `Aligner` and the golden fixture were all measuring different coarse fits.
+# Distinct from `search_best_match_config`'s budget: that search runs 8 times on
+# a much smaller image and is deliberately cheaper.
+N_KEYPOINTS = 10_000
+
+
 def search_then_register(
     img_left,
     img_right,
     max_size=2000,
-    n_keypoints=5000,
+    n_keypoints=N_KEYPOINTS,
     auto_mask=True,
     plot_match_result=True,
     search_kwargs=None,
@@ -259,9 +268,11 @@ def windowed_search_then_register(
     step=None,
     pixel_size_left=None,
     pixel_size_right=None,
-    window_margin=1.4,
+    # kept equal to `coarse_register`'s: the dispatcher always forwards its own
+    # value, so a different default here would only ever apply to direct callers
+    window_margin=1.0,
     max_size=2000,
-    n_keypoints=5000,
+    n_keypoints=N_KEYPOINTS,
     auto_mask=True,
     plot_match_result=False,
     n_workers=1,

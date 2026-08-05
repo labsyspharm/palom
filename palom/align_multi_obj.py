@@ -51,7 +51,7 @@ class MultiObjAligner:
 
     def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
             exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25,
-            windowed_coarse=True):
+            windowed_coarse=True, coarse_kwargs=None):
         self.segment_objects(
             downscale_factor=downscale_factor, merge_gap=merge_gap,
             segment=segment, plot_segmentation=True,
@@ -59,6 +59,7 @@ class MultiObjAligner:
         self.align_all_objects(
             plot_shift=True, refine=refine, multi_res=multi_res,
             min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
+            coarse_kwargs=coarse_kwargs,
         )
         self.combine_object_results(exclude_objects=exclude_objects)
         logger.info(
@@ -67,7 +68,7 @@ class MultiObjAligner:
 
     def seed_baseline_coarse(self, coarse_affine_matrix):
         """Seed the baseline (whole-image) coarse affine from outside, instead
-        of letting `_coarse_align` compute it lazily.
+        of letting `self.aligner` register it lazily.
 
         `coarse_affine_matrix` is in the thumbnail frame (2x3 or 3x3, as
         produced by `register_coarse.coarse_register`). The baseline is used for
@@ -130,19 +131,15 @@ class MultiObjAligner:
         )
     
     # the baseline coarse/full-res affines live on `self.aligner` -- no copy is
-    # kept here. Reading one before `seed_baseline_coarse` runs `_coarse_align`,
-    # whose defaults differ from (are stronger than) the base `Aligner`'s, so the
-    # lazy registration must be triggered here rather than in the getter.
+    # kept here, and no local coarse defaults either: reading one before
+    # `seed_baseline_coarse` falls through to `Aligner`'s lazy registration,
+    # which now uses the same keypoint budget this class used to raise on its own
     @property
     def baseline_affine_matrix(self):
-        if not self.aligner.has_coarse_affine_matrix:
-            self._coarse_align()
         return self.aligner.affine_matrix
 
     @property
     def baseline_coarse_affine_matrix(self):
-        if not self.aligner.has_coarse_affine_matrix:
-            self._coarse_align()
         return self.aligner.coarse_affine_matrix
 
     @property
@@ -150,15 +147,6 @@ class MultiObjAligner:
         if not hasattr(self, '_bbox_ref_thumbnail'):
             self.segment_objects(plot_segmentation=True)
         return self._bbox_ref_thumbnail
-
-    def _coarse_align(self, **kwargs):
-        # the flip / intensity-invert / reference-order search is internal to
-        # `coarse_register`, so only the keypoint budget is raised here
-        default_kwargs = {
-            'n_keypoints': 20_000,
-            'plot_match_result': True,
-        }
-        self.aligner.coarse_register_affine(**{**default_kwargs, **kwargs})
 
     # a typical WSI is ~2 cm across, so the default 500 µm merge gap is ~2.5% of
     # the image width; used as the fallback when the physical scale is unknown
@@ -411,12 +399,11 @@ class MultiObjAligner:
         # flip/intensity-invert and the reference-order search are handled
         # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
         default_kwargs = {
-            'n_keypoints': 10_000,
             'plot_match_result': True,
-            'auto_mask': True,
             # searched once for the slide pair, not per object -- see `match_config`
             'config': self.match_config,
         }
+        coarse_kwargs = {**default_kwargs, **kwargs}
         if windowed_coarse:
             # `coarse_register` adds a windowed retry when the whole-image match
             # comes back weak, which is an object's only chance of recovering
@@ -429,13 +416,15 @@ class MultiObjAligner:
                 np.asarray(masked_t_ref),
                 np.asarray(masked_t_moving),
                 matched_area_ratio=1.0,
-                **{**default_kwargs, **kwargs}
+                **coarse_kwargs
             )
         else:
+            # no windowed tile search on this route, so nothing to parallelize
+            coarse_kwargs.pop('n_workers', None)
             _mx = register_coarse.search_then_register(
                 np.asarray(masked_t_ref),
                 np.asarray(masked_t_moving),
-                **{**default_kwargs, **kwargs}
+                **coarse_kwargs
             )
         c21l.coarse_affine_matrix = _mx
         if plot_shifts:
@@ -531,7 +520,11 @@ class MultiObjAligner:
         )
 
     def align_all_objects(self, plot_shift=True, refine=True, multi_res=True,
-                          min_num_blocks=25, windowed_coarse=True):
+                          min_num_blocks=25, windowed_coarse=True,
+                          coarse_kwargs=None):
+        # `coarse_kwargs` reaches each object's coarse call -- notably
+        # `n_workers`, which parallelizes the windowed retry's tile search and
+        # otherwise never leaves the whole-slide baseline call
         block_mxs = []
         shift_masks = []
         object_affines = []
@@ -541,6 +534,7 @@ class MultiObjAligner:
             affine, shifts, mx, mask = self.align_object(
                 idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
                 min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
+                **(coarse_kwargs or {}),
             )
             object_affines.append(affine)
             object_shifts.append(shifts)

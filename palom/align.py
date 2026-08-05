@@ -422,9 +422,12 @@ class Aligner:
         pairs need no explicit flip/invert flags) and falls back to a windowed
         route when one scan images only a portion of the other. `kwargs` are
         forwarded to it.
+
+        The keypoint budget is the engine's `N_KEYPOINTS` -- deliberately not
+        overridden here, so a bare `Aligner`, the multi-object baseline and the
+        CLI all register the same way.
         """
         default_kwargs = {
-            'n_keypoints': 2000,
             'plot_match_result': True
         }
         default_kwargs.update(kwargs)
