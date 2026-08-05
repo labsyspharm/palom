@@ -67,6 +67,9 @@ class MultiObjAligner:
         # per-object QC rows, appended by `align_object`; initialized here so
         # calling `align_object` on its own is not an AttributeError
         self.object_qc = []
+        # set by `run`; the warp defaults to it so the two outputs cannot
+        # disagree about which objects are excluded
+        self.exclude_objects = None
 
     def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
             exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25,
@@ -84,6 +87,11 @@ class MultiObjAligner:
             min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
             coarse_kwargs=coarse_kwargs,
         )
+        # remembered so the warp does not have to be told again -- an object
+        # excluded from the block-matrix combine but not from
+        # `displacement_transformed_moving_img` is warped by its own affine in
+        # one output and by the baseline in the other
+        self.exclude_objects = exclude_objects
         self.combine_object_results(exclude_objects=exclude_objects)
         logger.info(
             "Alignment QC summary\n" + self.qc_summary(exclude_objects)
@@ -185,7 +193,13 @@ class MultiObjAligner:
     @property
     def bbox_ref_thumbnail(self):
         if not hasattr(self, '_bbox_ref_thumbnail'):
-            self.segment_objects(plot_segmentation=True)
+            # Deliberately not a lazy `segment_objects()`: it would run with the
+            # *default* `merge_gap`/`downscale_factor`, quietly ignoring what the
+            # caller meant to segment with, and plot as a side effect.
+            raise AttributeError(
+                "no objects segmented yet; call `segment_objects` (or `run`,"
+                " which calls it) first"
+            )
         return self._bbox_ref_thumbnail
 
     @property
@@ -509,6 +523,7 @@ class MultiObjAligner:
                 'config': self.match_config,
             }
             coarse_kwargs = {**default_kwargs, **(coarse_kwargs or {})}
+            figs_before = self._fignums()
             if windowed_coarse:
                 # `coarse_register` adds a windowed retry when the whole-image match
                 # comes back weak, which is an object's only chance of recovering
@@ -532,9 +547,7 @@ class MultiObjAligner:
                     **coarse_kwargs
                 )
             c21l.coarse_affine_matrix = _mx
-            if plot_shifts:
-                import matplotlib.pyplot as plt
-                plt.gcf().suptitle(f"Object {i} (coarse alignment)")
+            self._title_new_figs(figs_before, f"Object {i} (coarse alignment)")
             candidates.append(("object", c21l.coarse_affine_matrix))
 
         # per-object block region from the segmentation label (not bbox), so
@@ -543,15 +556,16 @@ class MultiObjAligner:
 
         refine_stats = None
         if refine:
+            figs_before = self._fignums()
             refined, refine_stats = align_refine.refine_affine_by_block_translation(
                 c21l, block_mask=block_mask, plot=plot_shifts
+            )
+            self._title_new_figs(
+                figs_before, f"Object {i} (coarse affine refinement)"
             )
             if refined is not None:
                 c21l.coarse_affine_matrix = refined
                 candidates.append(("object+refine", c21l.coarse_affine_matrix))
-                if plot_shifts:
-                    import matplotlib.pyplot as plt
-                    plt.gcf().suptitle(f"Object {i} (coarse affine refinement)")
 
         chosen, scores = self._pick_object_affine(
             i, candidates,
@@ -583,9 +597,9 @@ class MultiObjAligner:
         plot_failed = False
         if plot_shifts:
             try:
+                figs_before = self._fignums()
                 shift_plotter.plot_shifts()
-                import matplotlib.pyplot as plt
-                plt.gcf().suptitle(f"Object {i} (block shifts)")
+                self._title_new_figs(figs_before, f"Object {i} (block shifts)")
             except Exception as e:
                 plot_failed = True
                 logger.warning(f"Failed plotting shifts for object {i}: {e}")
@@ -643,6 +657,26 @@ class MultiObjAligner:
         # the displacement-field warp can build one continuous field per object
         self.object_affines = np.array(object_affines)
         self.object_shifts = np.array(object_shifts)
+
+    @staticmethod
+    def _fignums():
+        import matplotlib.pyplot as plt
+        return tuple(plt.get_fignums())
+
+    @staticmethod
+    def _title_new_figs(before, title):
+        """Title whatever figures a plotting call just created, if any.
+
+        `plt.gcf()` *creates* a figure when none is open, so titling "the
+        current figure" after a call that drew nothing yields a blank figure
+        carrying a real title -- which the caller then saves as QC (or, worse,
+        stamps onto an unrelated figure that happened to be current).
+        """
+        import matplotlib.pyplot as plt
+        new = [n for n in plt.get_fignums() if n not in before]
+        for num in new:
+            plt.figure(num).suptitle(title)
+        return bool(new)
 
     @staticmethod
     def _format_refine(stats):
@@ -747,8 +781,15 @@ class MultiObjAligner:
         `sigma_blocks` controls how gradually each object's displacement blends
         between its blocks (in block units); see
         `align.block_displacement_transformed_moving_img`.
+
+        `exclude_objects` defaults to whatever `run` was given, so the warp and
+        `block_affine_matrices_da` cannot disagree about which objects are in.
+        Pass a value only to override that for one call.
         """
         import scipy.ndimage as ndi
+
+        if exclude_objects is None:
+            exclude_objects = self.exclude_objects
 
         c21l = self.aligner
         ref_img = c21l.ref_img
