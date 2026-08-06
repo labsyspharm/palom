@@ -463,36 +463,41 @@ class MultiObjAligner:
         masked_t_moving = np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
         masked_t_moving[rsm:rem, csm:cem] = self.moving_thumbnail[rsm:rem, csm:cem]
 
-        mr = None
-        if multi_res:
-            # Built up front so its finest aligner can *be* `c21l`: it is at
-            # `level1` with the same thumbnails, so a separate `make_aligner()`
-            # only duplicated it -- and that duplicate cost a full thumbnail
-            # build per object, on top of the one per pyramid level `mr` already
-            # pays for.
-            mr = align_multi_res.MultiResAligner(
-                self.reader1, self.reader2, level1=self.level1,
-                channel1=self.channel1, channel2=self.channel2,
-                thumbnail_channel1=self.thumbnail_channel1,
-                thumbnail_channel2=self.thumbnail_channel2,
-                thumbnail_level1=self.thumbnail_level1,
-                thumbnails_pixel_size=self.thumbnails_pixel_size,
-                # match the standalone `multi_res` path so both use the same
-                # number of pyramid levels (the class default of 4 would add
-                # coarser levels)
-                min_num_blocks=min_num_blocks,
-            )
-            # `block_mask`, `shift_mask` and everything `combine_object_results`
-            # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
-            # unconditionally, so its finest aligner is the same grid. Pin it --
-            # a mismatch would surface far away, as an IndexError when
-            # `block_mask` indexes `shifts` below.
-            assert mr.levels[0] == self.level1, (
-                f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
-            )
-            c21l = mr.aligners[0]
-        else:
-            c21l = self.make_aligner()
+        # Built up front so its finest rung can *be* `c21l`: it is at `level1`
+        # with the same thumbnails, so a separate `make_aligner()` only
+        # duplicated it -- and that duplicate cost a full thumbnail build per
+        # object.
+        #
+        # `multi_res=False` is this same aligner truncated to its base rung
+        # rather than a separate code path: `MultiResAligner`'s base rung is the
+        # very `get_aligner` call `make_aligner()` makes, argument for argument,
+        # and an unreachable `min_num_blocks` stops the ladder there. Routing it
+        # through here also gets it `MultiResAligner.constrain_shifts`, which
+        # normalizes non-finite residuals to 0 -- `Aligner.constrain_shifts`
+        # alone leaves `inf` at outside-object blocks whenever
+        # `constrain_block_shifts` takes one of its degenerate early returns, and
+        # that `inf` reaches `displacement_transformed_moving_img` as `inf * 0 =
+        # NaN` under smoothing, or as a poisoned `cv2.remap` without it.
+        mr = align_multi_res.MultiResAligner(
+            self.reader1, self.reader2, level1=self.level1,
+            channel1=self.channel1, channel2=self.channel2,
+            thumbnail_channel1=self.thumbnail_channel1,
+            thumbnail_channel2=self.thumbnail_channel2,
+            thumbnail_level1=self.thumbnail_level1,
+            thumbnails_pixel_size=self.thumbnails_pixel_size,
+            # match the standalone `multi_res` path so both use the same number
+            # of rungs (the class default of 4 would add coarser ones)
+            min_num_blocks=min_num_blocks if multi_res else np.inf,
+        )
+        # `block_mask`, `shift_mask` and everything `combine_object_results`
+        # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
+        # unconditionally, so its finest rung is the same grid. Pin it -- a
+        # mismatch would surface far away, as an IndexError when `block_mask`
+        # indexes `shifts` below.
+        assert mr.levels[0] == self.level1, (
+            f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
+        )
+        c21l = mr.aligners[0]
         # the coarse fit and the refinement both read these; the coarser levels
         # of `mr` never touch a thumbnail, so masking only the finest is enough
         c21l.ref_thumbnail = masked_t_ref
@@ -575,25 +580,18 @@ class MultiObjAligner:
         c21l.coarse_affine_matrix = dict(candidates)[chosen]
 
         shift_mask = da.from_array(block_mask, chunks=1)
-        if mr is not None:
-            # coarse-to-fine block shifts within this object, using its refined
-            # affine as the baseline; the per-level mask follows the object.
-            # `c21l` is `mr.aligners[0]`, so this fans the chosen affine out to
-            # the coarser levels (the setter's job, not a re-assignment).
-            mr.coarse_affine_matrix = c21l.coarse_affine_matrix
-            mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
-            mr.constrain_shifts()
-            # the finest-level aligner carries this object's affine; the shifts
-            # are the cross-level pick made by `constrain_shifts`
-            affine_matrix, shifts = mr.aligners[0].affine_matrix, mr.shifts
-            # QC: show the multi-res per-level selection (not just the combined
-            # field) for this object
-            shift_plotter = mr
-        else:
-            c21l.compute_shifts(mask=shift_mask)
-            c21l.constrain_shifts()
-            affine_matrix, shifts = c21l.affine_matrix, c21l.shifts
-            shift_plotter = c21l
+        # coarse-to-fine block shifts within this object, using its refined
+        # affine as the baseline; the per-rung mask follows the object. `c21l` is
+        # `mr.aligners[0]`, so this fans the chosen affine out to the coarser
+        # rungs (the setter's job, not a re-assignment).
+        mr.coarse_affine_matrix = c21l.coarse_affine_matrix
+        mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
+        mr.constrain_shifts()
+        # the finest rung carries this object's affine; the shifts are the
+        # cross-rung pick made by `constrain_shifts`
+        affine_matrix, shifts = mr.aligners[0].affine_matrix, mr.shifts
+        # QC: show the per-rung selection, not just the combined field
+        shift_plotter = mr
         plot_failed = False
         if plot_shifts:
             try:
