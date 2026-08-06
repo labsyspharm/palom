@@ -1,7 +1,32 @@
+import copy
+
+import dask
 import dask.array as da
 import numpy as np
 
-from . import align
+from . import align, img_util
+
+
+def coarsen_2x(arr):
+    """One rung of the multi-res ladder: a 2x area mean, computed chunk-locally.
+
+    `img_util.cv2_downscale_local_mean` is palom's downsampler everywhere else
+    (`register_coarse`, `register_util`, `align_multi_obj`), so the ladder and
+    the coarse fit see pixels reduced the same way. It is ~6x faster than a
+    reshape-mean and keeps `ceil(n/2)`, where `da.coarsen(trim_excess=True)`
+    floors and drops the trailing pixel -- which would erode the right/bottom
+    edge once per rung and stop the shape ratios from being exactly 2.
+
+    No halo is needed: with an even chunk size, output pixel `i` averages input
+    `[2i, 2i+1]`, both inside the chunk, so the per-block result is identical to
+    running the whole array through at once. Only a trailing odd chunk reaches
+    cv2's border handling, and there a reflected edge value beats dropping the
+    pixel.
+    """
+    return da.map_blocks(
+        img_util.cv2_downscale_local_mean, arr, 2, dtype=arr.dtype,
+        chunks=tuple(tuple(-(-c // 2) for c in ax) for ax in arr.chunks),
+    )
 
 
 def map_to_finest_grid(arr, scale, out_shape):
@@ -30,7 +55,6 @@ class MultiResAligner:
         thumbnail_level1=-1,
         thumbnails_pixel_size=None,
         min_num_blocks=4,
-        min_block_px=None,
     ) -> None:
         self.reader1 = reader1
         self.reader2 = reader2
@@ -49,29 +73,27 @@ class MultiResAligner:
         self.thumbnails_pixel_size = thumbnails_pixel_size
 
         self.min_num_blocks = min_num_blocks
-        self.min_block_px = (
-            self.MIN_BLOCK_PX if min_block_px is None else min_block_px
-        )
-
 
         self._make_aligners()
 
     @property
     def downsample_factors(self):
-        return [
-            self.reader1.level_downsamples[ll]
-            for ll in self.levels
-        ]
+        # Exact powers of two off `level1`'s factor. Every rung is `level1`
+        # coarsened 2x per step, so these are known by construction rather than
+        # measured from level shapes -- none of `reader.level_downsamples`'
+        # rounding drift reaches the cross-rung mapping.
+        base = self.reader1.level_downsamples[self.level1]
+        return [base * 2**k for k in range(len(self.aligners))]
 
     @property
     def block_footprints(self):
-        """(row, col) level-0 pixels covered by one block, per aligner level.
+        """(row, col) level-0 pixels covered by one block, per aligner rung.
 
         Not the same as `downsample_factors`: a block's footprint is chunk size
-        *times* downsample, and chunk size is not guaranteed constant across
-        pyramid levels (`reader.auto_format_pyramid` halves it at every level,
-        which keeps the footprint -- and hence the grid -- identical at all
-        levels). Only the footprint ratio maps one level's grid onto another's.
+        *times* downsample. Rungs 1+ are rechunked to the base's chunk size, so
+        their footprints double exactly; the base carries whatever chunking the
+        reader handed over. Only the footprint ratio maps one rung's grid onto
+        another's.
         """
         return [
             np.multiply(al.ref_img.chunksize[-2:], dd)
@@ -91,62 +113,104 @@ class MultiResAligner:
         for aligner in self.aligners:
             aligner.coarse_affine_matrix = mx
 
-    # A level is useless for block phase correlation once its blocks get tiny,
-    # regardless of how many of them there are. `min_num_blocks` does not catch
-    # this: `reader.auto_format_pyramid` halves the chunk size at every level,
-    # so a synthesized pyramid has the *same* block count at every level and
-    # only the block size shrinks (1024, 512, ... 32 px). A real tiled pyramid
-    # keeps its tile size, so this test never fires there.
-    MIN_BLOCK_PX = 64
+    # Rungs above the finest are materialized so each is reduced from the one
+    # before it rather than by re-walking the base. Capped because rung 1 is a
+    # quarter of the base: a whole-slide level-0 base would otherwise put
+    # gigabytes in memory. Over budget, a rung simply stays lazy.
+    PERSIST_BUDGET = 2 << 30
 
     def _make_aligners(self):
-        self.aligners = []
-        # `levels` must be exactly the levels that produced `aligners` -- the
-        # two are zipped in `constrain_shifts` and `plot_shifts`. Deriving it
-        # from `reader1.pyramid[x].numblocks` instead double-counts the channel
-        # axis (readers chunk it to 1), which keeps levels that get no aligner.
-        self.levels = []
-        for l1 in range(self.level1, len(self.reader1.pyramid)):
-            c21l = align.get_aligner(
-                self.reader1, self.reader2,
-                channel1=self.channel1, channel2=self.channel2,
-                level1=l1,
-                thumbnail_channel1=self.thumbnail_channel1,
-                thumbnail_channel2=self.thumbnail_channel2,
-                thumbnail_level1=self.thumbnail_level1,
-                # FIXME handle user selected thumbnail level
-                thumbnail_level2=None,
-                thumbnails_pixel_size=self.thumbnails_pixel_size,
-            )
-            # `level1` is the frame every caller reads results back in
-            # (`aligners[0].affine_matrix`, and the grid `MultiObjAligner`
-            # builds its block masks on), so it is kept unconditionally. The
-            # quality tests only decide which *coarser* levels are worth adding:
-            # dropping them all just degrades to a single-resolution alignment,
-            # where dropping `level1` used to leave `aligners` empty and crash
-            # with a bare IndexError from the `coarse_affine_matrix` getter.
-            if l1 != self.level1:
-                if c21l.num_blocks < self.min_num_blocks:
-                    continue
-                if min(c21l.ref_img.chunksize[-2:]) < self.min_block_px:
-                    continue
-            # `constrain_shifts` maps grids across levels by block footprint,
-            # which assumes every block of a level covers the same area -- only
-            # the trailing chunk may be short. Regular for any zarr/tiff-backed
-            # pyramid; a rechunked or sliced input could break it.
-            for chunks in c21l.ref_img.chunks:
-                assert len(set(chunks[:-1])) <= 1, (
-                    f"level {l1} has irregular chunks {chunks}; cross-level"
-                    " block mapping requires uniformly sized blocks"
-                )
-            self.aligners.append(c21l)
-            self.levels.append(l1)
-        if not self.aligners:
+        """Build the resolution ladder from `level1` alone.
+
+        The coarser rungs are coarsened here rather than read from
+        `reader1.pyramid[level1 + k]`, so nothing downstream depends on how the
+        file's own pyramid was built: the downsample factors are exactly 2**k on
+        both readers, and both sides are reduced by the same filter. The coarse
+        fit still uses the file's thumbnail levels -- it is the block-shift
+        refinement that is meant to correct a poorly built pyramid.
+        """
+        if not 0 <= self.level1 < len(self.reader1.pyramid):
             raise ValueError(
                 f"level1={self.level1} is not a valid level of"
                 f" {type(self.reader1).__name__} (pyramid has"
                 f" {len(self.reader1.pyramid)} level(s))"
             )
+        # The one reader touch. `level1` is also the frame every caller reads
+        # results back in (`aligners[0].affine_matrix`, and the grid
+        # `MultiObjAligner` builds its block masks on), so the base rung is kept
+        # unconditionally -- `min_num_blocks` only decides how far the ladder
+        # extends above it, and an empty `aligners` would crash with a bare
+        # IndexError from the `coarse_affine_matrix` getter.
+        base = align.get_aligner(
+            self.reader1, self.reader2,
+            channel1=self.channel1, channel2=self.channel2,
+            level1=self.level1,
+            thumbnail_channel1=self.thumbnail_channel1,
+            thumbnail_channel2=self.thumbnail_channel2,
+            thumbnail_level1=self.thumbnail_level1,
+            # FIXME handle user selected thumbnail level
+            thumbnail_level2=None,
+            thumbnails_pixel_size=self.thumbnails_pixel_size,
+        )
+        # `constrain_shifts` maps grids across rungs by block footprint, which
+        # assumes every block of a rung covers the same area -- only the trailing
+        # chunk may be short. Rungs 1+ are rechunked to the base's chunk size, so
+        # only the base can violate it.
+        for chunks in base.ref_img.chunks:
+            assert len(set(chunks[:-1])) <= 1, (
+                f"level {self.level1} has irregular chunks {chunks}; cross-rung"
+                " block mapping requires uniformly sized blocks"
+            )
+        self.aligners = [base]
+        # Nominal level per rung: the pixels all come from `level1`, coarsened
+        # 2**k. Only `MultiObjAligner`'s finest-rung assert and the `plot_shifts`
+        # tick labels read this -- nothing indexes `reader1.pyramid` with it.
+        self.levels = [self.level1]
+        ref_chunks = base.ref_img.chunksize
+        moving_chunks = base.moving_img.chunksize
+        while True:
+            prev = self.aligners[-1]
+            if min(*prev.ref_img.shape, *prev.moving_img.shape) < 2:
+                break
+            rung = copy.copy(prev)
+            rung.ref_img = coarsen_2x(prev.ref_img).rechunk(ref_chunks)
+            rung.moving_img = coarsen_2x(prev.moving_img).rechunk(moving_chunks)
+            if rung.ref_img.npartitions < self.min_num_blocks:
+                break
+            # Both sides coarsen by the same factor, so the coarse affine's scale
+            # is unchanged and only its translation rescales -- which is exactly
+            # what halving both thumbnail down-factors does.
+            rung.ref_thumbnail_down_factor = prev.ref_thumbnail_down_factor / 2
+            rung.moving_thumbnail_down_factor = (
+                prev.moving_thumbnail_down_factor / 2
+            )
+            self.aligners.append(rung)
+            self.levels.append(self.levels[-1] + 1)
+        self._persist_ladder()
+
+    def _persist_ladder(self):
+        # One `dask.persist` call for the whole ladder: dask then walks the base
+        # once and drops every rung out of that single pass. Persisting rung by
+        # rung would re-walk the base for each. The base itself stays lazy -- it
+        # is too big to hold and its blocks stream fine.
+        #
+        # The moving rungs matter more than the ref rungs here:
+        # `block_affine_transformed_moving_img` slices an arbitrary bounding box
+        # per ref block, and under rotation those boxes overlap, so a lazy rung
+        # would re-derive shared regions once per block.
+        targets, budget = [], self.PERSIST_BUDGET
+        for aligner in self.aligners[1:]:
+            for name in ("ref_img", "moving_img"):
+                nbytes = getattr(aligner, name).nbytes
+                if nbytes > budget:
+                    continue
+                budget -= nbytes
+                targets.append((aligner, name))
+        if not targets:
+            return
+        persisted = dask.persist(*[getattr(al, n) for al, n in targets])
+        for (aligner, name), arr in zip(targets, persisted):
+            setattr(aligner, name, arr)
 
     def align(self, mask_fn=None):
         # `mask_fn(grid_shape) -> bool array` optionally restricts block-shift
