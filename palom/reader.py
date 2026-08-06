@@ -118,14 +118,23 @@ class DaPyramidChannelReader:
             "Unable to detect pyramid levels, it may take a while"
             " to compute thumbnails during coarse alignment"
         )
-        if first.numblocks[1:3] == (1, 1):
-            first = first.rechunk((1, 1024, 1024))
         pyramid_setting = pyramid_util.PyramidSetting(downscale_factor=2)
+        tile = pyramid_setting.tile_size
+        if first.numblocks[1:3] == (1, 1):
+            first = first.rechunk((1, tile, tile))
         num_levels = pyramid_setting.num_levels(first.shape[1:3])
+        # Coarsening level 0 by 2**i shrinks the chunks along with the pixels
+        # (1024, 512, ... 16 px), which would give every level the *same* block
+        # count and ever-tinier blocks -- the opposite of a real tiled pyramid,
+        # and useless for the block phase correlation in `align`. Rechunking
+        # back to the tile size restores the real-pyramid behaviour: constant
+        # block size, block count dropping by 4 per level. It only merges
+        # already-coarsened tiles, so it costs ~1% more tasks and no extra
+        # memory.
         return [
-            da.coarsen(
-                np.mean, first, {0: 1, 1: 2**i, 2: 2**i}, trim_excess=True
-            ).astype(first.dtype)
+            da.coarsen(np.mean, first, {0: 1, 1: 2**i, 2: 2**i}, trim_excess=True)
+            .astype(first.dtype)
+            .rechunk((1, tile, tile))
             for i in range(num_levels)
         ]
 
