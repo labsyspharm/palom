@@ -811,10 +811,34 @@ class MultiObjAligner:
             d = -np.asarray(self.object_shifts[i], dtype="float32").reshape(
                 *grid_shape, 2
             )
+            # Outside-object blocks never held a measurement: `_pc` returns inf
+            # there, and `constrain_block_shifts` either extrapolates them from
+            # the object's trend or -- on one of its degenerate early returns --
+            # leaves the inf for `MultiResAligner.constrain_shifts` to normalize
+            # to 0. That 0 is indistinguishable from a measured "no displacement
+            # here", and `_sample_displacement` samples one cell *outside* the
+            # object when it bilinearly interpolates the rim, so it would pull
+            # the rim toward zero.
+            #
+            # Fill those cells from the nearest in-object block instead. The rim
+            # then interpolates against a continuation of the object's own
+            # field, and no value that merely means "not measured" survives to
+            # be read as data. In-object cells map to themselves, so this is an
+            # identity there.
+            #
+            # Note this cannot be folded into the normalized convolution below:
+            # at the default `sigma_blocks=0` a gaussian filter is an identity,
+            # so that branch would leave `d` exactly as it found it.
+            in_object = self.object_block_mask(i, grid_shape)
+            if in_object.any():
+                _, (fill_r, fill_c) = ndi.distance_transform_edt(
+                    ~in_object, return_indices=True
+                )
+                d = d[fill_r, fill_c]
             if sigma_blocks and sigma_blocks > 0:
                 # normalized convolution: smooth only over the object's own
                 # blocks so the field isn't pulled toward neighbours/background
-                weight = self.object_block_mask(i, grid_shape).astype("float32")
+                weight = in_object.astype("float32")
                 num = ndi.gaussian_filter(
                     d * weight[..., None], sigma=(sigma_blocks, sigma_blocks, 0),
                     mode="constant",
