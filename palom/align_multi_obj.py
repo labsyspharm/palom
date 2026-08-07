@@ -11,7 +11,12 @@ import skimage.transform
 from loguru import logger
 
 from . import (
-    align, align_multi_res, align_refine, img_util, register_coarse, register_util,
+    align,
+    align_multi_res,
+    align_refine,
+    img_util,
+    register_coarse,
+    register_util,
 )
 
 
@@ -27,9 +32,7 @@ def transform_bbox(bbox, affine_mx, shape=None):
     tform = skimage.transform.AffineTransform(affine_mx)
     hi = (None, None) if shape is None else (shape[0], shape[1])
     for rs, re, cs, ce in bbox:
-        xx, yy = tform.inverse(
-            list(itertools.product([cs, ce], [rs, re]))
-        ).T
+        xx, yy = tform.inverse(list(itertools.product([cs, ce], [rs, re]))).T
         rs2, cs2 = np.floor([yy.min(), xx.min()]).astype(int)
         re2, ce2 = np.ceil([yy.max(), xx.max()]).astype(int)
         rs2, re2 = np.clip([rs2, re2], 0, hi[0])
@@ -39,13 +42,15 @@ def transform_bbox(bbox, affine_mx, shape=None):
 
 
 class MultiObjAligner:
-
     def __init__(
         self,
-        reader1, reader2,
+        reader1,
+        reader2,
         level1=0,
-        channel1=0, channel2=0,
-        thumbnail_channel1=None, thumbnail_channel2=None,
+        channel1=0,
+        channel2=0,
+        thumbnail_channel1=None,
+        thumbnail_channel2=None,
         thumbnail_level1=-1,
         thumbnails_pixel_size=None,
     ) -> None:
@@ -71,20 +76,35 @@ class MultiObjAligner:
         # disagree about which objects are excluded
         self.exclude_objects = None
 
-    def run(self, downscale_factor=8, merge_gap=500.0, segment=True,
-            exclude_objects=None, refine=True, multi_res=True, min_num_blocks=25,
-            windowed_coarse=True, coarse_kwargs=None, plot=True):
+    def run(
+        self,
+        downscale_factor=8,
+        merge_gap=500.0,
+        segment=True,
+        exclude_objects=None,
+        refine=True,
+        multi_res=True,
+        min_num_blocks=25,
+        windowed_coarse=True,
+        coarse_kwargs=None,
+        plot=True,
+    ):
         # `plot=False` skips every QC figure. Worth having on a headless run:
         # the figures are ~4 per object and nothing closes them until the caller
         # sweeps them at the end (`cli.align_he.save_all_figs`), so on a slide
         # with many pieces they are all resident at once.
         self.segment_objects(
-            downscale_factor=downscale_factor, merge_gap=merge_gap,
-            segment=segment, plot_segmentation=plot,
+            downscale_factor=downscale_factor,
+            merge_gap=merge_gap,
+            segment=segment,
+            plot_segmentation=plot,
         )
         self.align_all_objects(
-            plot_shift=plot, refine=refine, multi_res=multi_res,
-            min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
+            plot_shift=plot,
+            refine=refine,
+            multi_res=multi_res,
+            min_num_blocks=min_num_blocks,
+            windowed_coarse=windowed_coarse,
             coarse_kwargs=coarse_kwargs,
         )
         # remembered so the warp does not have to be told again -- an object
@@ -93,9 +113,7 @@ class MultiObjAligner:
         # one output and by the baseline in the other
         self.exclude_objects = exclude_objects
         self.combine_object_results(exclude_objects=exclude_objects)
-        logger.info(
-            "Alignment QC summary\n" + self.qc_summary(exclude_objects)
-        )
+        logger.info("Alignment QC summary\n" + self.qc_summary(exclude_objects))
 
     def seed_baseline_coarse(self, coarse_affine_matrix):
         """Seed the baseline (whole-image) coarse affine from outside, instead
@@ -109,7 +127,7 @@ class MultiObjAligner:
         """
         self.aligner.coarse_affine_matrix = coarse_affine_matrix
         # `bbox_moving_thumbnail` was derived from the previous baseline
-        self.__dict__.pop('_bbox_moving_thumbnail', None)
+        self.__dict__.pop("_bbox_moving_thumbnail", None)
 
     @cached_property
     def aligner(self):
@@ -118,11 +136,11 @@ class MultiObjAligner:
     @cached_property
     def ref_thumbnail(self):
         return np.array(self.aligner.ref_thumbnail)
-    
+
     @cached_property
     def moving_thumbnail(self):
         return np.array(self.aligner.moving_thumbnail)
-    
+
     @cached_property
     def match_config(self):
         """The intensity/orientation config every object's coarse fit reuses.
@@ -177,7 +195,6 @@ class MultiObjAligner:
     def fill_value_moving_thumbnail(self):
         return self._background_fill_value(self.moving_thumbnail)
 
-
     # the baseline coarse/full-res affines live on `self.aligner` -- no copy is
     # kept here, and no local coarse defaults either: reading one before
     # `seed_baseline_coarse` falls through to `Aligner`'s lazy registration,
@@ -192,7 +209,7 @@ class MultiObjAligner:
 
     @property
     def bbox_ref_thumbnail(self):
-        if not hasattr(self, '_bbox_ref_thumbnail'):
+        if not hasattr(self, "_bbox_ref_thumbnail"):
             # Deliberately not a lazy `segment_objects()`: it would run with the
             # *default* `merge_gap`/`downscale_factor`, quietly ignoring what the
             # caller meant to segment with, and plot as a side effect.
@@ -211,9 +228,10 @@ class MultiObjAligner:
         Invalidated by `segment_objects` (new boxes) and `seed_baseline_coarse`
         (new affine).
         """
-        if not hasattr(self, '_bbox_moving_thumbnail'):
+        if not hasattr(self, "_bbox_moving_thumbnail"):
             self._bbox_moving_thumbnail = transform_bbox(
-                self.bbox_ref_thumbnail, self.baseline_coarse_affine_matrix,
+                self.bbox_ref_thumbnail,
+                self.baseline_coarse_affine_matrix,
                 shape=self.moving_thumbnail.shape,
             )
         return self._bbox_moving_thumbnail
@@ -248,13 +266,17 @@ class MultiObjAligner:
         )
         return int(round(0.5 * merge_gap / small_px_um))
 
-    def segment_objects(self, downscale_factor=8, min_area=None,
-                        merge_gap=500.0, segment=True, plot_segmentation=False):
+    def segment_objects(
+        self,
+        downscale_factor=8,
+        min_area=None,
+        merge_gap=500.0,
+        segment=True,
+        plot_segmentation=False,
+    ):
         shape = self.ref_thumbnail.shape
         mask = img_util.entropy_mask(
-            img_util.cv2_downscale_local_mean(
-                self.ref_thumbnail, downscale_factor
-            )
+            img_util.cv2_downscale_local_mean(self.ref_thumbnail, downscale_factor)
         )
         if not segment:
             # single global object: all tissue is one label (no splitting). It
@@ -283,29 +305,34 @@ class MultiObjAligner:
             labeled = skimage.segmentation.expand_labels(labeled, 4)
 
         regionprops = skimage.measure.regionprops_table(
-            labeled, properties=['label', 'bbox', 'area']
+            labeled, properties=["label", "bbox", "area"]
         )
-        area = np.array(regionprops['area'])
+        area = np.array(regionprops["area"])
         # drop specks/debris; default threshold is 1% of the largest object
         if min_area is None:
             min_area = 0.01 * area.max() if area.size else 0
         keep = area >= min_area
         order = np.argsort(area[keep])[::-1]  # largest object first
-        bbox_ref_thumbnail = downscale_factor * np.array([
-            regionprops['bbox-0'],
-            regionprops['bbox-2'],
-            regionprops['bbox-1'],
-            regionprops['bbox-3']
-        ]).T
+        bbox_ref_thumbnail = (
+            downscale_factor
+            * np.array(
+                [
+                    regionprops["bbox-0"],
+                    regionprops["bbox-2"],
+                    regionprops["bbox-1"],
+                    regionprops["bbox-3"],
+                ]
+            ).T
+        )
         self._bbox_ref_thumbnail = bbox_ref_thumbnail[keep][order]
         # derived from the boxes above; re-segmenting invalidates it
-        self.__dict__.pop('_bbox_moving_thumbnail', None)
+        self.__dict__.pop("_bbox_moving_thumbnail", None)
         # label value of each (sorted) object, so per-object masks can be read
         # back from `segmentation_mask` (which keeps the original label values)
-        self._object_labels = np.array(regionprops['label'])[keep][order]
+        self._object_labels = np.array(regionprops["label"])[keep][order]
         self.segmentation_mask = img_util.repeat_2d(
             labeled, (downscale_factor, downscale_factor)
-        )[:shape[0], :shape[1]]
+        )[: shape[0], : shape[1]]
         if plot_segmentation:
             self.plot_segmentation()
 
@@ -323,7 +350,9 @@ class MultiObjAligner:
             grid_shape = self.aligner.grid_shape
         nbi, nbj = grid_shape
         obj = self.segmentation_mask == self._object_labels[i]
-        grid = cv2.resize(obj.astype('float32'), (nbj, nbi), interpolation=cv2.INTER_AREA)
+        grid = cv2.resize(
+            obj.astype("float32"), (nbj, nbi), interpolation=cv2.INTER_AREA
+        )
         mask = grid >= threshold
         if not mask.any():
             rr, cc = np.where(obj)
@@ -334,29 +363,44 @@ class MultiObjAligner:
         return mask
 
     def plot_segmentation(self):
-        import matplotlib.pyplot as plt
-        import matplotlib.patches
         import matplotlib.cm
+        import matplotlib.patches
+        import matplotlib.pyplot as plt
+
         colors = matplotlib.cm.Set3.colors
         fig, (ax1, ax2) = plt.subplots(1, 2)
+
         def _proc_img(img):
             if img_util.is_brightfield_img(img):
                 return img
             return np.log1p(img)
-        ax1.imshow(_proc_img(self.ref_thumbnail), cmap='gray')
-        ax2.imshow(_proc_img(self.moving_thumbnail), cmap='gray')
+
+        ax1.imshow(_proc_img(self.ref_thumbnail), cmap="gray")
+        ax2.imshow(_proc_img(self.moving_thumbnail), cmap="gray")
         bounds = skimage.segmentation.find_boundaries(
-            self.segmentation_mask, mode='thick'
+            self.segmentation_mask, mode="thick"
         ).astype(float)
-        ax1.imshow(np.where(bounds == 0, np.nan, bounds), cmap='cividis', vmin=0, vmax=1, interpolation='none')
+        ax1.imshow(
+            np.where(bounds == 0, np.nan, bounds),
+            cmap="cividis",
+            vmin=0,
+            vmax=1,
+            interpolation="none",
+        )
         for idx, (rs, re, cs, ce) in enumerate(self.bbox_ref_thumbnail):
             color = colors[idx % len(colors)]
-            mpatch = matplotlib.patches.Rectangle((cs, rs), ce-cs, re-rs, fill=False, edgecolor=color)
+            mpatch = matplotlib.patches.Rectangle(
+                (cs, rs), ce - cs, re - rs, fill=False, edgecolor=color
+            )
             ax1.add_patch(mpatch)
 
             corners = mpatch.get_corners()
-            tform = skimage.transform.AffineTransform(self.baseline_coarse_affine_matrix)
-            mpathc2 = matplotlib.patches.Polygon(tform.inverse(corners), fill=False, edgecolor=color)
+            tform = skimage.transform.AffineTransform(
+                self.baseline_coarse_affine_matrix
+            )
+            mpathc2 = matplotlib.patches.Polygon(
+                tform.inverse(corners), fill=False, edgecolor=color
+            )
             ax2.add_patch(mpathc2)
         return fig
 
@@ -372,16 +416,18 @@ class MultiObjAligner:
 
     def make_aligner(self):
         return align.get_aligner(
-            self.reader1, self.reader2,
+            self.reader1,
+            self.reader2,
             level1=self.level1,
-            channel1=self.channel1, channel2=self.channel2,
+            channel1=self.channel1,
+            channel2=self.channel2,
             thumbnail_level1=self.thumbnail_level1,
             thumbnail_level2=None,
             thumbnails_pixel_size=self.thumbnails_pixel_size,
             thumbnail_channel1=self.thumbnail_channel1,
             thumbnail_channel2=self.thumbnail_channel2,
         )
-    
+
     # Fall back only when the preferred affine's overlap score has collapsed to
     # this fraction of the best candidate's.
     #
@@ -448,19 +494,30 @@ class MultiObjAligner:
             )
         logger.info(
             f"Object {i}: coarse affine '{chosen}' ("
-            + ", ".join(f"{k}={v:.3f}" for k, v in scores.items()) + ")"
+            + ", ".join(f"{k}={v:.3f}" for k, v in scores.items())
+            + ")"
         )
         return chosen, scores
 
-    def align_object(self, i, plot_shifts=True, refine=True, multi_res=True,
-                     min_num_blocks=25, windowed_coarse=True, coarse_kwargs=None):
+    def align_object(
+        self,
+        i,
+        plot_shifts=True,
+        refine=True,
+        multi_res=True,
+        min_num_blocks=25,
+        windowed_coarse=True,
+        coarse_kwargs=None,
+    ):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = self.bbox_moving_thumbnail[i]
 
         masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
         masked_t_ref[rs:re, cs:ce] = self.ref_thumbnail[rs:re, cs:ce]
 
-        masked_t_moving = np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
+        masked_t_moving = (
+            np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
+        )
         masked_t_moving[rsm:rem, csm:cem] = self.moving_thumbnail[rsm:rem, csm:cem]
 
         # Built up front so its finest rung can *be* `c21l`: it is at `level1`
@@ -479,8 +536,11 @@ class MultiObjAligner:
         # that `inf` reaches `displacement_transformed_moving_img` as `inf * 0 =
         # NaN` under smoothing, or as a poisoned `cv2.remap` without it.
         mr = align_multi_res.MultiResAligner(
-            self.reader1, self.reader2, level1=self.level1,
-            channel1=self.channel1, channel2=self.channel2,
+            self.reader1,
+            self.reader2,
+            level1=self.level1,
+            channel1=self.channel1,
+            channel2=self.channel2,
             thumbnail_channel1=self.thumbnail_channel1,
             thumbnail_channel2=self.thumbnail_channel2,
             thumbnail_level1=self.thumbnail_level1,
@@ -523,9 +583,9 @@ class MultiObjAligner:
             # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
             default_kwargs = {
                 # follows the caller's plotting choice rather than forcing it on
-                'plot_match_result': plot_shifts,
+                "plot_match_result": plot_shifts,
                 # searched once for the slide pair, not per object -- see `match_config`
-                'config': self.match_config,
+                "config": self.match_config,
             }
             coarse_kwargs = {**default_kwargs, **(coarse_kwargs or {})}
             figs_before = self._fignums()
@@ -541,15 +601,15 @@ class MultiObjAligner:
                     np.asarray(masked_t_ref),
                     np.asarray(masked_t_moving),
                     matched_area_ratio=1.0,
-                    **coarse_kwargs
+                    **coarse_kwargs,
                 )
             else:
                 # no windowed tile search on this route, so nothing to parallelize
-                coarse_kwargs.pop('n_workers', None)
+                coarse_kwargs.pop("n_workers", None)
                 _mx = register_coarse.search_then_register(
                     np.asarray(masked_t_ref),
                     np.asarray(masked_t_moving),
-                    **coarse_kwargs
+                    **coarse_kwargs,
                 )
             c21l.coarse_affine_matrix = _mx
             self._title_new_figs(figs_before, f"Object {i} (coarse alignment)")
@@ -565,16 +625,16 @@ class MultiObjAligner:
             refined, refine_stats = align_refine.refine_affine_by_block_translation(
                 c21l, block_mask=block_mask, plot=plot_shifts
             )
-            self._title_new_figs(
-                figs_before, f"Object {i} (coarse affine refinement)"
-            )
+            self._title_new_figs(figs_before, f"Object {i} (coarse affine refinement)")
             if refined is not None:
                 c21l.coarse_affine_matrix = refined
                 candidates.append(("object+refine", c21l.coarse_affine_matrix))
 
         chosen, scores = self._pick_object_affine(
-            i, candidates,
-            self.ref_thumbnail[rs:re, cs:ce], self.moving_thumbnail,
+            i,
+            candidates,
+            self.ref_thumbnail[rs:re, cs:ce],
+            self.moving_thumbnail,
             register_util.translate_mx(-cs, -rs),
         )
         c21l.coarse_affine_matrix = dict(candidates)[chosen]
@@ -604,30 +664,42 @@ class MultiObjAligner:
 
         in_object = np.asarray(block_mask).ravel()
         magnitudes = np.linalg.norm(np.asarray(shifts)[in_object], axis=1)
-        self.object_qc.append({
-            "object": i,
-            "label": int(self._object_labels[i]),
-            "n_blocks": int(in_object.sum()),
-            "affine": chosen,
-            # what the object would have used absent a score collapse; recorded
-            # rather than re-derived, since the candidate list is not fixed (an
-            # object whose bbox lands off the moving image never gets an
-            # "object" candidate at all)
-            "preferred": candidates[-1][0],
-            "scores": scores,
-            "refine": refine_stats,
-            "shift_median": float(np.median(magnitudes)) if magnitudes.size else None,
-            "shift_max": float(magnitudes.max()) if magnitudes.size else None,
-            "plot_failed": plot_failed,
-        })
+        self.object_qc.append(
+            {
+                "object": i,
+                "label": int(self._object_labels[i]),
+                "n_blocks": int(in_object.sum()),
+                "affine": chosen,
+                # what the object would have used absent a score collapse; recorded
+                # rather than re-derived, since the candidate list is not fixed (an
+                # object whose bbox lands off the moving image never gets an
+                # "object" candidate at all)
+                "preferred": candidates[-1][0],
+                "scores": scores,
+                "refine": refine_stats,
+                "shift_median": float(np.median(magnitudes))
+                if magnitudes.size
+                else None,
+                "shift_max": float(magnitudes.max()) if magnitudes.size else None,
+                "plot_failed": plot_failed,
+            }
+        )
         return (
-            affine_matrix, shifts,
-            align.block_affine_matrices(affine_matrix, shifts), shift_mask,
+            affine_matrix,
+            shifts,
+            align.block_affine_matrices(affine_matrix, shifts),
+            shift_mask,
         )
 
-    def align_all_objects(self, plot_shift=True, refine=True, multi_res=True,
-                          min_num_blocks=25, windowed_coarse=True,
-                          coarse_kwargs=None):
+    def align_all_objects(
+        self,
+        plot_shift=True,
+        refine=True,
+        multi_res=True,
+        min_num_blocks=25,
+        windowed_coarse=True,
+        coarse_kwargs=None,
+    ):
         # `coarse_kwargs` reaches each object's coarse call -- notably
         # `n_workers`, which parallelizes the windowed retry's tile search and
         # otherwise never leaves the whole-slide baseline call
@@ -638,8 +710,12 @@ class MultiObjAligner:
         self.object_qc = []
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
             affine, shifts, mx, mask = self.align_object(
-                idx, plot_shifts=plot_shift, refine=refine, multi_res=multi_res,
-                min_num_blocks=min_num_blocks, windowed_coarse=windowed_coarse,
+                idx,
+                plot_shifts=plot_shift,
+                refine=refine,
+                multi_res=multi_res,
+                min_num_blocks=min_num_blocks,
+                windowed_coarse=windowed_coarse,
                 # passed as a dict, not splatted: splatting let a coarse kwarg
                 # named `refine`/`multi_res`/... bind to `align_object`'s own
                 # parameter and never reach the registration
@@ -659,6 +735,7 @@ class MultiObjAligner:
     @staticmethod
     def _fignums():
         import matplotlib.pyplot as plt
+
         return tuple(plt.get_fignums())
 
     @staticmethod
@@ -671,6 +748,7 @@ class MultiObjAligner:
         stamps onto an unrelated figure that happened to be current).
         """
         import matplotlib.pyplot as plt
+
         new = [n for n in plt.get_fignums() if n not in before]
         for num in new:
             plt.figure(num).suptitle(title)
@@ -681,8 +759,10 @@ class MultiObjAligner:
         if stats is None:
             return "not run"
         if stats["accepted"]:
-            return (f"{stats['n_inliers']}/{stats['n_correspondences']} inliers,"
-                    f" {stats['residual']:.2f}px")
+            return (
+                f"{stats['n_inliers']}/{stats['n_correspondences']} inliers,"
+                f" {stats['residual']:.2f}px"
+            )
         return f"rejected ({stats['reason']})"
 
     def qc_summary(self, exclude_objects=None):
@@ -698,15 +778,18 @@ class MultiObjAligner:
         if not qc:
             return "  (no objects aligned)"
         excluded = set(exclude_objects or [])
-        head = (f"  {'obj':>3} {'label':>5} {'blocks':>6}  {'affine':<14}"
-                f" {'score':>5}  {'refinement':<30} {'shift med/max':>13}  notes")
+        head = (
+            f"  {'obj':>3} {'label':>5} {'blocks':>6}  {'affine':<14}"
+            f" {'score':>5}  {'refinement':<30} {'shift med/max':>13}  notes"
+        )
         lines = [head, "  " + "-" * (len(head) - 2)]
         n_fallback = n_rejected = 0
         for r in qc:
             # `align_object` records what it actually preferred; fall back to
             # the candidate order for rows built by hand (the self-checks)
             preferred = r.get("preferred") or next(
-                name for name in ("object+refine", "object", "baseline")
+                name
+                for name in ("object+refine", "object", "baseline")
                 if name in r["scores"]
             )
             notes = []
@@ -728,8 +811,10 @@ class MultiObjAligner:
                 f" {r['affine']:<14} {score:>5.3f}  {self._format_refine(r['refine']):<30}"
                 f" {shift:>13}  {', '.join(notes)}"
             )
-        tail = [f"  {len(qc)} object(s); {n_fallback} fell back to a lower-ranked"
-                f" affine, {n_rejected} refinement(s) rejected"]
+        tail = [
+            f"  {len(qc)} object(s); {n_fallback} fell back to a lower-ranked"
+            f" affine, {n_rejected} refinement(s) rejected"
+        ]
         if n_fallback or n_rejected:
             tail.append("  ^ check the per-object QC figures for these")
         return "\n".join(lines + tail)
@@ -747,23 +832,27 @@ class MultiObjAligner:
             )
         masks = self.shift_masks[to_include]
         mxs = self.block_mxs[to_include]
-        passed = np.argmax(
-            masks.reshape(len(masks), -1), axis=0
-        )
+        passed = np.argmax(masks.reshape(len(masks), -1), axis=0)
         mxs_final = np.zeros_like(mxs[0])
         for idx, bb in enumerate(mxs):
             mm = passed == idx
             mxs_final[mm] = bb[mm]
-        mxs_final[
-            ~masks.reshape(len(masks), -1).max(axis=0)
-        ] = self.baseline_affine_matrix
+        mxs_final[~masks.reshape(len(masks), -1).max(axis=0)] = (
+            self.baseline_affine_matrix
+        )
         self.block_affine_matrices_da = align.block_affine_matrices_da(
             mxs_final, self.aligner.grid_shape
         )
 
     def displacement_transformed_moving_img(
-        self, moving_img, sigma_blocks=0.0, field_order=1, is_mask=False,
-        cval=0.0, exclude_objects=None, interpolation="skimage",
+        self,
+        moving_img,
+        sigma_blocks=0.0,
+        field_order=1,
+        is_mask=False,
+        cval=0.0,
+        exclude_objects=None,
+        interpolation="skimage",
     ):
         """Seam-free, mask-constrained multi-object warp.
 
@@ -840,7 +929,8 @@ class MultiObjAligner:
                 # blocks so the field isn't pulled toward neighbours/background
                 weight = in_object.astype("float32")
                 num = ndi.gaussian_filter(
-                    d * weight[..., None], sigma=(sigma_blocks, sigma_blocks, 0),
+                    d * weight[..., None],
+                    sigma=(sigma_blocks, sigma_blocks, 0),
                     mode="constant",
                 )
                 den = ndi.gaussian_filter(
