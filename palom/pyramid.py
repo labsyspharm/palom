@@ -12,6 +12,12 @@ from loguru import logger
 
 from . import __version__ as _version
 
+# zarr v3 dropped ``zarr.create``'s v2-style ``compressor`` argument (it now
+# rejects numcodecs codecs for format-3 arrays) in favor of ``zarr.create_array``
+# with ``compressors``. Pick the creation API at import time based on the
+# installed zarr version.
+_ZARR_V3 = int(zarr.__version__.split(".")[0]) >= 3
+
 
 class PyramidSetting:
     def __init__(self, downscale_factor=2, tile_size=1024, max_pyramid_img_size=1024):
@@ -299,14 +305,61 @@ def tile_from_pyramid(
         img = None
 
 
-def da_to_zarr(da_img, zarr_store=None, num_workers=None, out_shape=None, chunks=None):
+def create_zarr_array(shape, chunks, dtype, compression_level=1):
+    """Creates an empty in-memory zarr array with zstd-compressed chunks.
+
+    Parameters
+    ----------
+    shape, chunks, dtype
+        Shape, chunk shape and dtype of the resulting array.
+    compression_level : int or None
+        zstd compression level; pass `None` to store chunks uncompressed.
+
+    Returns
+    -------
+    zarr.Array
+        Writable array backed by memory, created through the zarr v2 or v3 API
+        depending on the installed zarr version.
+    """
+    if _ZARR_V3:
+        compressors = (
+            None
+            if compression_level is None
+            else zarr.codecs.ZstdCodec(level=compression_level)
+        )
+        return zarr.create_array(
+            zarr.storage.MemoryStore(),
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+            compressors=compressors,
+            overwrite=True,
+        )
+    import numcodecs
+
+    compressor = (
+        None if compression_level is None else numcodecs.Zstd(level=compression_level)
+    )
+    return zarr.create(
+        shape, chunks=chunks, dtype=dtype, compressor=compressor, overwrite=True
+    )
+
+
+def da_to_zarr(
+    da_img,
+    zarr_store=None,
+    num_workers=None,
+    out_shape=None,
+    chunks=None,
+    compression_level=1,
+):
     if zarr_store is None:
         if out_shape is None:
             out_shape = da_img.shape
         if chunks is None:
             chunks = da_img.chunksize
-        zarr_store = zarr.create(
-            out_shape, chunks=chunks, dtype=da_img.dtype, overwrite=True
+        zarr_store = create_zarr_array(
+            out_shape, chunks, da_img.dtype, compression_level=compression_level
         )
     da_img.to_zarr(zarr_store, compute=False).compute(num_workers=num_workers)
     return zarr_store
