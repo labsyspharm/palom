@@ -499,42 +499,30 @@ class MultiObjAligner:
         )
         return chosen, scores
 
-    def align_object(
-        self,
-        i,
-        plot_shifts=True,
-        refine=True,
-        multi_res=True,
-        min_num_blocks=25,
-        windowed_coarse=True,
-        coarse_kwargs=None,
-    ):
-        rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
-        rsm, rem, csm, cem = self.bbox_moving_thumbnail[i]
+    def make_multi_res_aligner(self, multi_res=True, min_num_blocks=25):
+        """The resolution ladder every object's block shifts are measured on.
 
-        masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
-        masked_t_ref[rs:re, cs:ce] = self.ref_thumbnail[rs:re, cs:ce]
+        Nothing about it is per-object -- the object enters only through the
+        masked thumbnails, the coarse affine and the block mask, all of which
+        `align_object` reassigns on the aligner it is handed. So
+        `align_all_objects` builds one and passes it to every object.
 
-        masked_t_moving = (
-            np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
-        )
-        masked_t_moving[rsm:rem, csm:cem] = self.moving_thumbnail[rsm:rem, csm:cem]
+        That matters because `MultiResAligner.__init__` persists the ladder,
+        which walks the whole moving image once (on the melanoma pair, ~40s to
+        decode a 10.8 GB level-0 SVS). Per object, that is the single most
+        expensive thing in a multi-piece run.
 
-        # Built up front so its finest rung can *be* `c21l`: it is at `level1`
-        # with the same thumbnails, so a separate `make_aligner()` only
-        # duplicated it -- and that duplicate cost a full thumbnail build per
-        # object.
-        #
-        # `multi_res=False` is this same aligner truncated to its base rung
-        # rather than a separate code path: `MultiResAligner`'s base rung is the
-        # very `get_aligner` call `make_aligner()` makes, argument for argument,
-        # and an unreachable `min_num_blocks` stops the ladder there. Routing it
-        # through here also gets it `MultiResAligner.constrain_shifts`, which
-        # normalizes non-finite residuals to 0 -- `Aligner.constrain_shifts`
-        # alone leaves `inf` at outside-object blocks whenever
-        # `constrain_block_shifts` takes one of its degenerate early returns, and
-        # that `inf` reaches `displacement_transformed_moving_img` as `inf * 0 =
-        # NaN` under smoothing, or as a poisoned `cv2.remap` without it.
+        `multi_res=False` is this same aligner truncated to its base rung rather
+        than a separate code path: `MultiResAligner`'s base rung is the very
+        `get_aligner` call `make_aligner()` makes, argument for argument, and an
+        unreachable `min_num_blocks` stops the ladder there. Routing it through
+        here also gets it `MultiResAligner.constrain_shifts`, which normalizes
+        non-finite residuals to 0 -- `Aligner.constrain_shifts` alone leaves
+        `inf` at outside-object blocks whenever `constrain_block_shifts` takes
+        one of its degenerate early returns, and that `inf` reaches
+        `displacement_transformed_moving_img` as `inf * 0 = NaN` under
+        smoothing, or as a poisoned `cv2.remap` without it.
+        """
         mr = align_multi_res.MultiResAligner(
             self.reader1,
             self.reader2,
@@ -553,13 +541,49 @@ class MultiObjAligner:
         # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
         # unconditionally, so its finest rung is the same grid. Pin it -- a
         # mismatch would surface far away, as an IndexError when `block_mask`
-        # indexes `shifts` below.
+        # indexes `shifts` in `align_object`.
         assert mr.levels[0] == self.level1, (
             f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
         )
+        return mr
+
+    def align_object(
+        self,
+        i,
+        plot_shifts=True,
+        refine=True,
+        multi_res=True,
+        min_num_blocks=25,
+        windowed_coarse=True,
+        coarse_kwargs=None,
+        mr=None,
+    ):
+        rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
+        rsm, rem, csm, cem = self.bbox_moving_thumbnail[i]
+
+        masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
+        masked_t_ref[rs:re, cs:ce] = self.ref_thumbnail[rs:re, cs:ce]
+
+        masked_t_moving = (
+            np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
+        )
+        masked_t_moving[rsm:rem, csm:cem] = self.moving_thumbnail[rsm:rem, csm:cem]
+
+        # Built up front so its finest rung can *be* `c21l`: it is at `level1`
+        # with the same thumbnails, so a separate `make_aligner()` only
+        # duplicated it -- and that duplicate cost a full thumbnail build per
+        # object. `align_all_objects` hands the same ladder to every object (see
+        # `make_multi_res_aligner`); building one here keeps this method
+        # callable on its own.
+        if mr is None:
+            mr = self.make_multi_res_aligner(
+                multi_res=multi_res, min_num_blocks=min_num_blocks
+            )
         c21l = mr.aligners[0]
         # the coarse fit and the refinement both read these; the coarser levels
-        # of `mr` never touch a thumbnail, so masking only the finest is enough
+        # of `mr` never touch a thumbnail, so masking only the finest is enough.
+        # Assigned per object, so a shared ladder never carries the previous
+        # object's mask into this one's coarse fit.
         c21l.ref_thumbnail = masked_t_ref
         c21l.moving_thumbnail = masked_t_moving
 
@@ -708,9 +732,16 @@ class MultiObjAligner:
         object_affines = []
         object_shifts = []
         self.object_qc = []
+        # one ladder for the whole slide, not one per piece -- building it
+        # persists a coarsened copy of the moving image, which is the most
+        # expensive step in the run
+        mr = self.make_multi_res_aligner(
+            multi_res=multi_res, min_num_blocks=min_num_blocks
+        )
         for idx, _ in enumerate(self.bbox_ref_thumbnail):
             affine, shifts, mx, mask = self.align_object(
                 idx,
+                mr=mr,
                 plot_shifts=plot_shift,
                 refine=refine,
                 multi_res=multi_res,
