@@ -44,6 +44,43 @@ def map_to_finest_grid(arr, scale, out_shape):
     return arr[np.ix_(rr, cc)]
 
 
+def moving_coarsen_exponent(ref_px, moving_px, n_rungs):
+    """How many 2x reductions each rung's *moving* image gets.
+
+    The reference ladder is 2x per rung by construction, so rung `k`'s reference
+    pixel is `ref_px * 2**k`. The moving image starts at `moving_px`, which is
+    set by `level2` -- the coarsest level of reader2 that is still no coarser
+    than `level1`. Because a file pyramid steps by 4x as readily as by 2x, that
+    starting point can be most of a factor of two finer than it needs to be
+    (melanoma pair: 0.263 um against a 0.65 um reference), and coarsening the
+    moving side in lockstep with the reference carries that mismatch all the way
+    up: rung 2 asks for 2.6 um and gets 1.05 um, four times the pixels it can
+    use.
+
+    So each rung takes as many 2x reductions as fit under its own reference
+    pixel -- `floor(log2(ref_px_k / moving_px))` -- which makes the exponents
+    non-uniform (0, 2, 3 on the melanoma pair, i.e. a 4x step then a 2x step).
+    Two clamps keep the result buildable and safe:
+
+    - rung 0 is pinned to 0. Its `moving_img` is the array `level2` names, and
+      `Aligner.level2` is what a caller warps a whole pyramid level with
+      (`cli.align_he` reads `reader2.pyramid[level2]`); coarsening it here would
+      put the finest affine in a frame no level corresponds to.
+    - the sequence is forced non-decreasing, so each rung is reachable from the
+      one below by whole 2x steps and the ladder can chain (and share) its
+      coarsening instead of re-reducing the base every time.
+
+    A moving image *coarser* than the reference clamps to 0 throughout: there is
+    nothing to gain by upsampling, and the reference-side ladder still coarsens.
+    """
+    exponents, prev = [], 0
+    for k in range(n_rungs):
+        want = int(np.floor(np.log2(ref_px * 2**k / moving_px)))
+        prev = 0 if k == 0 else max(prev, want, 0)
+        exponents.append(prev)
+    return exponents
+
+
 class MultiResAligner:
 
     def __init__(
@@ -86,6 +123,21 @@ class MultiResAligner:
         return [base * 2**k for k in range(len(self.aligners))]
 
     @property
+    def moving_downsample_factors(self):
+        """Per-rung moving downsample, in reader2 level-0 pixels -- the moving
+        counterpart of `downsample_factors`.
+
+        Deliberately *not* `base * 2**k`: the moving image starts at whatever
+        pixel size `level2` is, which is generally not a power of two away from
+        `level1`'s, so locking it to the reference's 2x steps carries that
+        starting mismatch into every rung. See `moving_coarsen_exponent`. The
+        two lists are the thing to read side by side when a rung's affine looks
+        scaled wrong.
+        """
+        base = self.reader2.level_downsamples[self.aligners[0].level2]
+        return [base * 2**e for e in self._moving_exponents]
+
+    @property
     def block_footprints(self):
         """(row, col) level-0 pixels covered by one block, per aligner rung.
 
@@ -124,10 +176,13 @@ class MultiResAligner:
 
         The coarser rungs are coarsened here rather than read from
         `reader1.pyramid[level1 + k]`, so nothing downstream depends on how the
-        file's own pyramid was built: the downsample factors are exactly 2**k on
-        both readers, and both sides are reduced by the same filter. The coarse
-        fit still uses the file's thumbnail levels -- it is the block-shift
-        refinement that is meant to correct a poorly built pyramid.
+        file's own pyramid was built: every rung is reduced from the caller's
+        starting level by the same filter. The reference's downsample factors
+        are exactly 2**k; the moving side's are not (see
+        `moving_coarsen_exponent`), because its starting level is generally not
+        a power of two away from `level1`. The coarse fit still uses the file's
+        thumbnail levels -- it is the block-shift refinement that is meant to
+        correct a poorly built pyramid.
         """
         if not 0 <= self.level1 < len(self.reader1.pyramid):
             raise ValueError(
@@ -162,30 +217,62 @@ class MultiResAligner:
                 " block mapping requires uniformly sized blocks"
             )
         self.aligners = [base]
+        # 2x reductions applied to each rung's moving image, relative to
+        # `level2`. Tracked as it is built because the loop chains from `prev`
+        # and needs to know how many steps are still owed.
+        self._moving_exponents = [0]
         # Nominal level per rung: the pixels all come from `level1`, coarsened
         # 2**k. Only `MultiObjAligner`'s finest-rung assert and the `plot_shifts`
         # tick labels read this -- nothing indexes `reader1.pyramid` with it.
         self.levels = [self.level1]
         ref_chunks = base.ref_img.chunksize
         moving_chunks = base.moving_img.chunksize
+        # The two sides are coarsened independently: the reference by 2x per
+        # rung (so `downsample_factors` stays exactly 2**k and the cross-rung
+        # shift scaling is exact), the moving side by whatever whole number of
+        # 2x steps fits under that rung's reference pixel. Both are still
+        # reduced from the caller's starting levels by the same filter -- the
+        # ladder never reads a level of the file's own pyramid.
+        known_px = self.reader1.has_pixel_size and self.reader2.has_pixel_size
+        ref_px = self.reader1.pixel_size * self.reader1.level_downsamples[self.level1]
+        moving_px = (
+            self.reader2.pixel_size * self.reader2.level_downsamples[base.level2]
+        )
         while True:
             prev = self.aligners[-1]
             if min(*prev.ref_img.shape, *prev.moving_img.shape) < 2:
                 break
+            k = len(self.aligners)
+            # without both pixel sizes the ratio is meaningless (one reader's
+            # placeholder 1 um against the other's real size would pick a wildly
+            # wrong factor), so fall back to the reference's lockstep 2x
+            exponent = (
+                moving_coarsen_exponent(ref_px, moving_px, k + 1)[-1]
+                if known_px
+                else k
+            )
             rung = copy.copy(prev)
             rung.ref_img = coarsen_2x(prev.ref_img).rechunk(ref_chunks)
-            rung.moving_img = coarsen_2x(prev.moving_img).rechunk(moving_chunks)
-            if rung.ref_img.npartitions < self.min_num_blocks:
+            moving = prev.moving_img
+            for _ in range(exponent - self._moving_exponents[-1]):
+                moving = coarsen_2x(moving)
+            rung.moving_img = moving.rechunk(moving_chunks)
+            if (
+                rung.ref_img.npartitions < self.min_num_blocks
+                or min(*rung.moving_img.shape) < 2
+            ):
                 break
-            # Both sides coarsen by the same factor, so the coarse affine's scale
-            # is unchanged and only its translation rescales -- which is exactly
-            # what halving both thumbnail down-factors does.
+            # The reference halves every rung; the moving side may have taken
+            # more than one step, so its factor comes off the base rather than
+            # from halving `prev` -- `2**exponent` is exact where a chain of
+            # divisions is only nominally so.
             rung.ref_thumbnail_down_factor = prev.ref_thumbnail_down_factor / 2
             rung.moving_thumbnail_down_factor = (
-                prev.moving_thumbnail_down_factor / 2
+                base.moving_thumbnail_down_factor / 2**exponent
             )
             self.aligners.append(rung)
             self.levels.append(self.levels[-1] + 1)
+            self._moving_exponents.append(exponent)
         self._persist_ladder()
 
     def _persist_ladder(self):
