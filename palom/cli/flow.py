@@ -22,9 +22,7 @@ def shifts_to_lab(shifts, max_radius=None, l_factor=50, ab_factor=100):
         assert max_radius > 0
     # shifts is [np.inf, np.inf, np.inf] for blank block
     valid = np.all(np.isfinite(shifts), axis=0)
-    # FIXME workaround to exclude masked blocks which are [0, 0, 0]
-    valid &= ~np.all(shifts == 0, axis=0)
-    
+
     distances = np.where(valid, np.linalg.norm(shifts[:2], axis=0), np.nan)
     lab = np.zeros((3, *shifts[0].shape))
     
