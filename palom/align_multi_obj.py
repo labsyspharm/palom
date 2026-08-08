@@ -115,7 +115,7 @@ class MultiObjAligner:
         self.combine_object_results(exclude_objects=exclude_objects)
         logger.info("Alignment QC summary\n" + self.qc_summary(exclude_objects))
 
-    def seed_baseline_coarse(self, coarse_affine_matrix):
+    def seed_baseline_coarse(self, coarse_affine_matrix, match_config=None):
         """Seed the baseline (whole-image) coarse affine from outside, instead
         of letting `self.aligner` register it lazily.
 
@@ -124,10 +124,17 @@ class MultiObjAligner:
         object bbox transforms, the background fill in
         `combine_object_results`, and the fallback affine in the multi-object
         displacement warp.
+
+        Pass `match_config` (the seeding fit's `Aligner.coarse_match_config`)
+        along with it -- a matrix alone carries no record of the configuration it
+        was matched under, and `match_config` would have to search for one again.
         """
         self.aligner.coarse_affine_matrix = coarse_affine_matrix
-        # `bbox_moving_thumbnail` was derived from the previous baseline
+        self.aligner.coarse_match_config = match_config
+        # `bbox_moving_thumbnail` was derived from the previous baseline, and
+        # `match_config` from the previous config
         self.__dict__.pop("_bbox_moving_thumbnail", None)
+        self.__dict__.pop("match_config", None)
 
     @cached_property
     def aligner(self):
@@ -145,27 +152,48 @@ class MultiObjAligner:
     def match_config(self):
         """The intensity/orientation config every object's coarse fit reuses.
 
-        Searched once from the *unmasked* whole-slide thumbnails: the config encodes
-        the modality relationship (which image is histogram-matched into which, and
+        Inherited from the baseline fit -- the config that fit actually committed to,
+        which on the windowed route is the winning tile's. The config encodes the
+        modality relationship (which image is histogram-matched into which, and
         whether it is intensity-inverted) and whether the scans are mirrored, all
         properties of the slide pair rather than of one tissue piece. Re-searching per
         object costs 8 ORB+RANSAC runs each (x N tiles on the windowed route) on a
         thumbnail that is mostly background fill, where the search's `min_fold_increase`
         test is weak and can settle on a different config than the whole slide did.
 
-        ponytail: config pinned from the whole-slide search; a piece placed mirrored
-        relative to the rest of the slide gets the wrong flip, its fit comes back near
-        identity, and `_pick_object_affine` drops it back to the baseline affine (the
-        object stays on the baseline, visible in its QC panel and scores). Upgrade when
-        seen in practice: re-search per object when the pinned-config fit scores weak.
+        Inheriting rather than searching afresh matters for the same reason. A fresh
+        whole-thumbnail search sees mostly background on a small-portion pair, so it
+        routinely exhausts `search_best_match_config`'s recursion without any config
+        standing clear and returns the argmax of a flat field -- while the baseline,
+        on the windowed route, had a tile sitting on real tissue that found one
+        decisively. Objects were being pinned to the weaker of the two answers, and
+        to one the baseline they perturb never agreed to.
+
+        ponytail: only a seeded baseline (`seed_baseline_coarse` without a config)
+        still searches. A piece placed mirrored relative to the rest of the slide
+        gets the wrong flip either way, its fit comes back near identity, and
+        `_pick_object_affine` drops it back to the baseline affine (the object stays
+        on the baseline, visible in its QC panel and scores). Upgrade when seen in
+        practice: re-search per object when the pinned-config fit scores weak.
         """
+        # reading the baseline runs `Aligner`'s lazy coarse fit if nothing has
+        # seeded or triggered it yet, which is what leaves the config behind
+        _ = self.baseline_coarse_affine_matrix
+        config = self.aligner.coarse_match_config
+        if config is not None:
+            logger.info(
+                f"Pinned coarse match config for all objects:"
+                f" {register_coarse.format_config(config)}"
+                f" (inherited from the baseline coarse fit)"
+            )
+            return config
         n_inliers, config = register_coarse.search_best_match_config(
             self.ref_thumbnail, self.moving_thumbnail
         )
-        adjust_which, scalar, func = config
         logger.info(
-            f"Pinned coarse match config for all objects: adjust={adjust_which},"
-            f" scalar={scalar:+.0f}, flip={func.__name__} ({n_inliers} inliers)"
+            f"Pinned coarse match config for all objects:"
+            f" {register_coarse.format_config(config)} ({n_inliers} inliers;"
+            f" searched, as the seeded baseline carried no config)"
         )
         return config
 
@@ -630,6 +658,18 @@ class MultiObjAligner:
             else:
                 # no windowed tile search on this route, so nothing to parallelize
                 coarse_kwargs.pop("n_workers", None)
+                # ponytail: an object whose whole-image fit lands nowhere has no
+                # second chance here -- `search_then_register` returns identity and
+                # `_pick_object_affine` drops it to the baseline, so the object is
+                # never better than the whole-slide affine. Observed on LSP74545
+                # (2026-08-07): every object fit came back at 14 matches / score
+                # 0.000 and fell back. The retry exists one branch up; the reason
+                # it is not the default is cost -- N tiles x 8 configs per object,
+                # on thumbnails that are mostly background fill. Upgrade path:
+                # take the `windowed_coarse=True` branch per object when the
+                # whole-image fit scores below `FALLBACK_SCORE_RATIO` of the
+                # baseline, so the retry costs only the objects that need it,
+                # rather than making `windowed_coarse` an all-or-nothing flag.
                 _mx = register_coarse.search_then_register(
                     np.asarray(masked_t_ref),
                     np.asarray(masked_t_moving),

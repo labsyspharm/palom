@@ -155,8 +155,11 @@ def align_he(
             thumbnails_pixel_size=thumbnail_pixel_size,
         )
         # reuse the coarse affine computed above as the baseline, instead of
-        # poking private attributes
-        mo_aligner.seed_baseline_coarse(aligner.coarse_affine_matrix)
+        # poking private attributes -- with the config it was matched under, so
+        # the per-object fits inherit it instead of searching for their own
+        mo_aligner.seed_baseline_coarse(
+            aligner.coarse_affine_matrix, aligner.coarse_match_config
+        )
         mo_aligner.run(
             segment=multi_obj,
             merge_gap=merge_gap,

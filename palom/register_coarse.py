@@ -62,6 +62,12 @@ def match_img_with_config(img1, img2, mask1, mask2, adjust_which, scalar, func):
         return masked_match_histograms(scalar * img1, img2, mask1, mask2), func(img2)
 
 
+def format_config(config):
+    """One-line rendering of a `search_best_match_config` config, for logging."""
+    adjust_which, scalar, func = config
+    return f"adjust={adjust_which}, scalar={scalar:+.0f}, flip={func.__name__}"
+
+
 def search_best_match_config(
     img_left,
     img_right,
@@ -117,8 +123,20 @@ def search_best_match_config(
     fold_increase = best / np.mean(matches[matches < best])
     idx = np.argmax(matches)
     if fold_increase > min_fold_increase:
+        logger.debug(
+            f"config {format_config(results[idx][1])}: {best} inliers,"
+            f" {fold_increase:.1f}x the mean of the rest"
+        )
         return results[idx]
     if downsize_factor == 1:
+        # the recursion bottomed out without any config standing clear of the
+        # others, so this is the argmax of a flat field -- likely noise, and
+        # coarser passes may well have favoured a different config
+        logger.warning(
+            f"No confident match config: best is {format_config(results[idx][1])}"
+            f" with {best} inliers, only {fold_increase:.1f}x the mean of the"
+            f" rest (need {min_fold_increase}x); using it anyway"
+        )
         return results[idx]
 
     return search_best_match_config(
@@ -161,6 +179,7 @@ def search_then_register(
     plot_match_result=True,
     search_kwargs=None,
     return_match_count=False,
+    return_config=False,
     config=None,
 ):
     """Whole-image coarse registration: pick the best intensity/flip config, then
@@ -169,8 +188,10 @@ def search_then_register(
     Both images are downscaled so their largest side is ~`max_size` (`search_kwargs`
     is forwarded to `search_best_match_config`, which downsamples further on its own);
     the resulting affine is rescaled back to full-resolution coordinates. Returns the
-    2x3 affine mapping `img_right` -> `img_left`, or, with `return_match_count`, that
-    matrix and the number of RANSAC-inlier keypoints backing it.
+    2x3 affine mapping `img_right` -> `img_left`; `return_match_count` and
+    `return_config` each append an extra -- in that order -- to a returned tuple: the
+    number of RANSAC-inlier keypoints backing the fit, and the config it matched with
+    (searched or pinned), so a caller can reuse it rather than search again.
 
     `config` (as returned by `search_best_match_config`) skips the 8-config search and
     uses that config directly -- the config describes the image *pair* (modality
@@ -191,6 +212,10 @@ def search_then_register(
 
     if config is None:
         _, config = search_best_match_config(img1, img2, **search_kwargs)
+    else:
+        # a searched config logs itself; a pinned one is otherwise invisible, so
+        # a fit made with the wrong flip leaves no trace of what it matched with
+        logger.debug(f"config {format_config(config)} (pinned by caller)")
     _img1, _img2 = match_img_with_config(
         img1,
         img2,
@@ -228,8 +253,13 @@ def search_then_register(
     logger.debug(
         f"{match.sum():6} matches; {n_keypoints:6} keypoints; mask: {auto_mask}"
     )
+    extras = []
     if return_match_count:
-        return mx_full_res[:2], int(match.sum())
+        extras.append(int(match.sum()))
+    if return_config:
+        extras.append(config)
+    if extras:
+        return (mx_full_res[:2], *extras)
     return mx_full_res[:2]
 
 
@@ -276,6 +306,7 @@ def windowed_search_then_register(
     auto_mask=True,
     plot_match_result=False,
     n_workers=1,
+    return_config=False,
     config=None,
 ):
     """Coarse alignment for small-portion pairs (one scan images only a fraction of
@@ -319,7 +350,25 @@ def windowed_search_then_register(
     if config is not None and left_big:
         tile_config = _swap_config_sides(config)
 
-    def _eval_tile(r0, c0):
+    row_origins = _tile_origins(big.shape[0], win, step)
+    col_origins = _tile_origins(big.shape[1], win, step)
+    origins = [(r0, c0) for r0 in row_origins for c0 in col_origins]
+    n_tiles = len(origins)
+    # tiles are tagged by their fixed position in `origins`, not by completion
+    # order, so a tile's start and end lines carry the same number and pair up
+    # even when several workers interleave them
+    def _tag(k, r0, c0):
+        return f"[{k + 1:>{len(str(n_tiles))}}/{n_tiles}] tile(r{r0},c{c0})"
+
+    logger.info(
+        f"Windowed coarse: {n_tiles} tile(s) of {win}px"
+        f" ({len(row_origins)}x{len(col_origins)} grid, step {step}) over"
+        f" {'img_left' if left_big else 'img_right'} {big.shape}, matching"
+        f" {'img_right' if left_big else 'img_left'} {small.shape};"
+        f" {n_workers} worker(s)"
+    )
+
+    def _eval_tile(k, r0, c0):
         # NOTE: cropping to a tile is a form of masked feature matching (it
         # localizes ORB detection to a subregion so the small portion's
         # correspondences aren't diluted by the whole image). An equivalent
@@ -329,7 +378,8 @@ def windowed_search_then_register(
         # (e.g. segmentation-derived) region shapes. Cropping is used here for
         # simplicity and to preserve local resolution.
         tile = big[r0 : r0 + win, c0 : c0 + win]
-        mx, n_match = search_then_register(
+        logger.info(f"  {_tag(k, r0, c0)} started")
+        mx, n_match, cfg = search_then_register(
             small,
             tile,
             max_size=max_size,
@@ -337,21 +387,19 @@ def windowed_search_then_register(
             auto_mask=auto_mask,
             plot_match_result=False,
             return_match_count=True,
+            return_config=True,
             config=tile_config,
         )
         # tile->small composed with big->tile gives big->small
         big2small = np.vstack([mx, [0, 0, 1]]) @ register_util.translate_mx(-c0, -r0)
         score = register_util.score_overlap(small, big, big2small, 1.0)
-        logger.debug(f"tile(r{r0},c{c0}) ncc={score:.3f} matches={n_match}")
-        return (score, n_match, big2small, r0, c0)
+        # the nested search's own DEBUG lines carry no tile id, so with >1 worker
+        # these bracketing lines are the only attributable record
+        logger.info(f"  {_tag(k, r0, c0)} ncc={score:.3f} matches={n_match}")
+        return (score, n_match, big2small, r0, c0, cfg)
 
-    origins = [
-        (r0, c0)
-        for r0 in _tile_origins(big.shape[0], win, step)
-        for c0 in _tile_origins(big.shape[1], win, step)
-    ]
     if n_workers == 1:
-        results = [_eval_tile(r0, c0) for r0, c0 in origins]
+        results = [_eval_tile(k, r0, c0) for k, (r0, c0) in enumerate(origins)]
     else:
         # The per-tile work is CPU-bound OpenCV (ORB, BFMatcher, RANSAC) that
         # releases the GIL, and reads the shared `big`/`small` arrays read-only,
@@ -362,17 +410,36 @@ def windowed_search_then_register(
         # blocked on the GIL during the numpy/skimage phases).
         import concurrent.futures
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=n_workers
-        ) as executor:
-            results = list(executor.map(lambda o: _eval_tile(*o), origins))
+        # `register`'s per-match DEBUG lines (keypoint counts, two per config
+        # tried) are emitted from every worker at once with nothing naming the
+        # tile they belong to, so at DEBUG they shuffle into unreadable noise.
+        # Muted only for the threaded loop -- the sequential branch above keeps
+        # them, where they are attributable by position.
+        logger.disable("palom.register")
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=n_workers
+            ) as executor:
+                results = list(
+                    executor.map(
+                        lambda ko: _eval_tile(ko[0], *ko[1]), enumerate(origins)
+                    )
+                )
+        finally:
+            logger.enable("palom.register")
 
     finite = [r for r in results if np.isfinite(r[0])]
     if not finite:
         logger.warning("Windowed registration found no valid tile; returning identity")
-        return np.eye(3)[:2]
+        return (np.eye(3)[:2], config) if return_config else np.eye(3)[:2]
 
-    score, n_match, big2small, r0, c0 = max(finite, key=lambda r: (r[0], r[1]))
+    ranked = sorted(finite, key=lambda r: (r[0], r[1]), reverse=True)
+    score, n_match, big2small, r0, c0, best_config = ranked[0]
+    logger.info(
+        f"Windowed coarse: best tile(r{r0},c{c0}) ncc={score:.3f}"
+        f" matches={n_match}; {len(finite)}/{n_tiles} tile(s) scored"
+        + (f", runner-up ncc={ranked[1][0]:.3f}" if len(ranked) > 1 else "")
+    )
 
     if plot_match_result:
         # re-run the winning tile with the standard feature-match plot, then insert a
@@ -387,6 +454,15 @@ def windowed_search_then_register(
 
     # big->small back to moving(img_right)->ref(img_left)
     mx_full = np.linalg.inv(big2small) if left_big else big2small
+    if return_config:
+        # the winning tile's config, which when the tiles searched for themselves
+        # is the strongest evidence about the pair in the whole run -- a tile that
+        # actually contains the small scan matches on real tissue, where the
+        # whole-image search is mostly comparing background. Learned from a
+        # (small, tile) call, so undo the side swap `tile_config` applied.
+        return mx_full[:2], (
+            _swap_config_sides(best_config) if left_big else best_config
+        )
     return mx_full[:2]
 
 
@@ -496,10 +572,13 @@ def coarse_register(
     window_margin=1.0,
     plot_match_result=False,
     n_workers=1,
+    return_config=False,
     **search_kwargs,
 ):
     """Dispatch coarse alignment between the whole-image and windowed small-portion
-    routes. Returns a 2x3 affine mapping `img_right` (moving) -> `img_left` (ref).
+    routes. Returns a 2x3 affine mapping `img_right` (moving) -> `img_left` (ref), or
+    with `return_config`, that matrix and the intensity/orientation config the
+    committed route matched with (see `search_then_register`).
 
     Decision (thresholds are hardcoded defaults, to be refined on more pairs):
     - If `matched_area_ratio` (smaller / larger physical-footprint area, in [0, 1]) is
@@ -529,6 +608,7 @@ def coarse_register(
         pixel_size_right=pixel_size_right,
         plot_match_result=plot_match_result,
         n_workers=n_workers,
+        return_config=return_config,
     )
     if matched_area_ratio is not None and matched_area_ratio < small_portion_area_ratio:
         logger.info(
@@ -545,16 +625,17 @@ def coarse_register(
     # registration in a run, and RANSAC is randomized -- so the re-run also drew
     # a figure that need not agree with the matrix actually returned.
     fignums_before = _fignums() if plot_match_result else None
-    mx, n_match = search_then_register(
+    mx, n_match, cfg = search_then_register(
         img_left,
         img_right,
         plot_match_result=plot_match_result,
         return_match_count=True,
+        return_config=True,
         **search_kwargs,
     )
     ncc = register_util.score_overlap(img_left, img_right, np.vstack([mx, [0, 0, 1]]))
     if n_match >= min_match_count and ncc >= min_ncc:
-        return mx
+        return (mx, cfg) if return_config else mx
     _close_figs_since(fignums_before)
     logger.info(
         f"whole-image coarse weak (matches={n_match}, ncc={ncc:.3f}); "

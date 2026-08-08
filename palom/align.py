@@ -380,6 +380,12 @@ class Aligner:
         self.ref_thumbnail_pixel_size=ref_thumbnail_pixel_size
         self.moving_thumbnail_pixel_size=moving_thumbnail_pixel_size
         self._coarse_affine_matrix = None
+        # The intensity/orientation config the coarse fit committed to. Kept so a
+        # multi-object orchestrator can reuse it for its per-object fits instead
+        # of searching the thumbnails all over again and possibly disagreeing with
+        # the baseline it is perturbing. None until a fit runs -- assigning
+        # `coarse_affine_matrix` from outside leaves no config to inherit.
+        self.coarse_match_config = None
 
     @property
     def coarse_affine_matrix(self):
@@ -432,12 +438,15 @@ class Aligner:
             'plot_match_result': True
         }
         default_kwargs.update(kwargs)
-        self.coarse_affine_matrix = register_coarse.coarse_register(
-            np.asarray(self.ref_thumbnail),
-            np.asarray(self.moving_thumbnail),
-            pixel_size_left=self.ref_thumbnail_pixel_size,
-            pixel_size_right=self.moving_thumbnail_pixel_size,
-            **default_kwargs
+        self.coarse_affine_matrix, self.coarse_match_config = (
+            register_coarse.coarse_register(
+                np.asarray(self.ref_thumbnail),
+                np.asarray(self.moving_thumbnail),
+                pixel_size_left=self.ref_thumbnail_pixel_size,
+                pixel_size_right=self.moving_thumbnail_pixel_size,
+                return_config=True,
+                **default_kwargs
+            )
         )
 
     @property
