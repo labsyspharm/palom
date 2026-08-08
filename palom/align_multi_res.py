@@ -1,6 +1,5 @@
 import copy
 
-import dask
 import dask.array as da
 import numpy as np
 
@@ -168,7 +167,8 @@ class MultiResAligner:
     # Rungs above the finest are materialized so each is reduced from the one
     # before it rather than by re-walking the base. Capped because rung 1 is a
     # quarter of the base: a whole-slide level-0 base would otherwise put
-    # gigabytes in memory. Over budget, a rung simply stays lazy.
+    # gigabytes in memory. Over budget, a rung stays lazy -- cheaply, as long as
+    # its parent was persisted; see `_persist_rung`.
     PERSIST_BUDGET = 2 << 30
 
     def _make_aligners(self):
@@ -217,6 +217,8 @@ class MultiResAligner:
                 " block mapping requires uniformly sized blocks"
             )
         self.aligners = [base]
+        # spent by `_persist_rung` as the ladder is built
+        self._persist_budget = self.PERSIST_BUDGET
         # 2x reductions applied to each rung's moving image, relative to
         # `level2`. Tracked as it is built because the loop chains from `prev`
         # and needs to know how many steps are still owed.
@@ -273,31 +275,43 @@ class MultiResAligner:
             self.aligners.append(rung)
             self.levels.append(self.levels[-1] + 1)
             self._moving_exponents.append(exponent)
-        self._persist_ladder()
+            # before the next iteration coarsens from it -- see `_persist_rung`
+            self._persist_rung(rung)
 
-    def _persist_ladder(self):
-        # One `dask.persist` call for the whole ladder: dask then walks the base
-        # once and drops every rung out of that single pass. Persisting rung by
-        # rung would re-walk the base for each. The base itself stays lazy -- it
-        # is too big to hold and its blocks stream fine.
-        #
-        # The moving rungs matter more than the ref rungs here:
-        # `block_affine_transformed_moving_img` slices an arbitrary bounding box
-        # per ref block, and under rotation those boxes overlap, so a lazy rung
-        # would re-derive shared regions once per block.
-        targets, budget = [], self.PERSIST_BUDGET
-        for aligner in self.aligners[1:]:
-            for name in ("ref_img", "moving_img"):
-                nbytes = getattr(aligner, name).nbytes
-                if nbytes > budget:
-                    continue
-                budget -= nbytes
-                targets.append((aligner, name))
-        if not targets:
-            return
-        persisted = dask.persist(*[getattr(al, n) for al, n in targets])
-        for (aligner, name), arr in zip(targets, persisted):
-            setattr(aligner, name, arr)
+    def _persist_rung(self, rung):
+        """Materialize a rung, in place, as soon as it is built.
+
+        Staying lazy is far more expensive than it looks. Every block of
+        `compute_shifts` takes the rung's whole moving array as a `src_array`
+        kwarg (`block_affine_transformed_moving_img`), so the rung's entire
+        graph -- not the slice a block reads -- is a dependency of every block:
+        a lazy rung re-reads and re-coarsens the full moving slide once per
+        `compute_shifts` call, which on a real pair is minutes for a rung of a
+        few dozen blocks. Measured on the twopiece pair at level1=1: a lazy rung
+        carries ~47 000 tasks whatever its size (4 blocks or 660), against a few
+        thousand once persisted.
+
+        This runs per rung, inside the build loop, rather than once over the
+        finished ladder. Persisting rung by rung does NOT re-walk the base --
+        the coarser rungs chain off `prev`, which is already in memory by then
+        -- and it is what keeps a rung that misses the budget cheap: it is then
+        a coarsening of the last persisted rung instead of a second full pass
+        over the base. Persisting the finished ladder in one call left the
+        over-budget rungs pointing at the base, because their graphs were built
+        before the parents were replaced.
+
+        The budget is spent finest-rung-first, which is the order they are
+        built; each rung is a quarter of the one below, so in practice the whole
+        ladder above the first rung fits, and if it does not, the rungs that do
+        fit still give the ones above them a cheap parent. The base itself is
+        never persisted -- it is too big to hold and its blocks stream fine.
+        """
+        for name in ("ref_img", "moving_img"):
+            arr = getattr(rung, name)
+            if arr.nbytes > self._persist_budget:
+                continue
+            self._persist_budget -= arr.nbytes
+            setattr(rung, name, arr.persist())
 
     def align(self, mask_fn=None):
         # `mask_fn(grid_shape) -> bool array` optionally restricts block-shift
