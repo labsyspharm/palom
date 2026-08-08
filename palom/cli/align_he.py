@@ -124,8 +124,12 @@ def align_he(
         im_h, im_w = ax.images[0].get_array().shape
         set_subplot_size(im_w / 288, im_h / 288, ax=ax)
         ax.set_anchor("N")
-        # use 0.5 inch on the top for figure title
-        fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
+        # use 0.5 inch on the top for figure title -- grow the figure to make
+        # room instead of eating into the axes, which fails outright
+        # (`bottom cannot be >= top`) when the match image is under ~0.5 inch
+        figw, figh = fig.get_size_inches()
+        fig.set_size_inches(figw, figh + 0.5)
+        fig.subplots_adjust(top=1 - 0.5 / (figh + 0.5))
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
 
     if viz_coarse_napari:
