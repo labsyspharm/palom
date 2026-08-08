@@ -413,25 +413,54 @@ def _plot_windowed_qc(
     main = fig.axes[0]
     main.set_title(f"{which_big} tile @ (r{r0}, c{c0})  ncc={score:.2f}  n={n_match}",
                    fontsize=6)
-    # shrink the match axes to make room, then insert the locator on the right
-    p = main.get_position()
-    main.set_position([p.x0, p.y0, p.width * 0.72, p.height])
-    ax_loc = fig.add_axes([p.x0 + p.width * 0.76, p.y0, p.width * 0.24, p.height])
+    # Lay both panels out in inches. The match panel is sized to its montage so
+    # the aspect="equal" image fills its box exactly -- a taller box letterboxes
+    # the image and opens a gap under the title. TOP_IN is left free for the axes
+    # titles plus a suptitle the caller may add (`cli.align_he`).
+    LEFT_IN, BOTTOM_IN, TOP_IN, GAP_IN, LOC_IN = 0.8, 0.4, 0.6, 0.15, 1.4
+    figw = fig.get_figwidth()
+    mh, mw = main.images[0].get_array().shape[:2]
+    main_w = figw - LEFT_IN - GAP_IN - LOC_IN - 0.1
+    main_h = main_w * mh / mw
+    figh = BOTTOM_IN + main_h + TOP_IN
+    fig.set_size_inches(figw, figh)
+    main.set_position(
+        [LEFT_IN / figw, BOTTOM_IN / figh, main_w / figw, main_h / figh]
+    )
+    ax_loc = fig.add_axes([
+        (LEFT_IN + main_w + GAP_IN) / figw, BOTTOM_IN / figh,
+        LOC_IN / figw, main_h / figh,
+    ])
 
     f = max(1, round(max(big.shape) / 500))
     bt = img_util.cv2_to_uint8(img_util.cv2_downscale_local_mean(big, f))
-    rr0, cc0, wwin = r0 / f, c0 / f, win / f
-    ax_loc.imshow(bt, cmap="gray", alpha=0.5)  # whole slide faded
+    # integer downscaled coords so the crop and its `extent` agree exactly
+    rr0, cc0, wwin = r0 // f, c0 // f, max(1, win // f)
+    crop = bt[rr0 : rr0 + wwin, cc0 : cc0 + wwin]
+    # both panels share 0-255 limits; `bt` is uint8, so per-image autoscaling
+    # would contrast-stretch the window differently from the background
+    ax_loc.imshow(bt, cmap="gray", alpha=0.5, vmin=0, vmax=255)  # whole slide faded
     ax_loc.imshow(  # winning window at full opacity, placed at its location
-        bt[int(rr0) : int(rr0 + wwin), int(cc0) : int(cc0 + wwin)],
+        crop,
         cmap="gray",
-        extent=[cc0, cc0 + wwin, rr0 + wwin, rr0],
+        vmin=0,
+        vmax=255,
+        extent=[cc0, cc0 + crop.shape[1], rr0 + crop.shape[0], rr0],
     )
-    ax_loc.add_patch(Rectangle((cc0, rr0), wwin, wwin, ec="r", fc="none", lw=1))
+    # `deepskyblue` matches the match-line color of the panel next to it; red is
+    # reserved for status/error cues and loses contrast on grayscale tissue for
+    # red-green color vision deficiency
+    ax_loc.add_patch(
+        Rectangle(
+            (cc0, rr0), crop.shape[1], crop.shape[0],
+            ec="deepskyblue", fc="none", lw=1,
+        )
+    )
     ax_loc.set_xlim(0, bt.shape[1])
     ax_loc.set_ylim(bt.shape[0], 0)
     ax_loc.set_title(f"window in {which_big}", fontsize=6)
     ax_loc.set_axis_off()
+    ax_loc.set_anchor("N")  # keep it under its title instead of centered
     return fig
 
 

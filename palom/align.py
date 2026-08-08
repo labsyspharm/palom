@@ -469,12 +469,15 @@ class Aligner:
         )
    
     def compute_shifts(self, mask=True, pcc_kwargs=None):
-        logger.info(f"Computing block-wise shifts")
+        logger.info(
+            f"Computing block-wise shifts - grid shape {self.grid_shape}"
+            f" ({self.num_blocks} blocks of {self.ref_img.chunksize})"
+        )
         ref_img = self.ref_img
         moving_img = self.affine_transformed_moving_img(self.affine_matrix)
         shifts_da = block_shifts(ref_img, moving_img, mask, pcc_kwargs=pcc_kwargs)
         with tqdm.dask.TqdmCallback(
-            ascii=True, desc='Computing shifts',
+            ascii=True, desc=f'Computing shifts ({self.grid_shape})',
         ):
             shifts = shifts_da.compute()
         self.shifts = shifts.reshape(-1, 2)

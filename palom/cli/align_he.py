@@ -113,7 +113,12 @@ def align_he(
     fig = plt.gcf()
     fig.suptitle(f"{p2.name} (coarse alignment)", fontsize=8)
     ax = fig.axes[0]  # feature-match axes (first for both the whole-image and
-    ax.set_title(f"{p1.name} - {p2.name}", fontsize=6)  # windowed routes)
+    # windowed routes). Keep whatever title the route set (the windowed route puts
+    # its tile/ncc info there) and add the ref name only -- `p2.name` is already in
+    # the suptitle, and both names together overflow the narrower windowed panel.
+    ax.set_title(
+        "\n".join(filter(None, [ax.get_title(), f"ref: {p1.name}"])), fontsize=6
+    )
     if len(fig.axes) == 1:
         # whole-image single-panel plot: size the subplot to the match image
         im_h, im_w = ax.images[0].get_array().shape
