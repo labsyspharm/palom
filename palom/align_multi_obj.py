@@ -1,4 +1,6 @@
 import itertools
+import pathlib
+import re
 from functools import cached_property
 
 import cv2
@@ -75,6 +77,11 @@ class MultiObjAligner:
         # set by `run`; the warp defaults to it so the two outputs cannot
         # disagree about which objects are excluded
         self.exclude_objects = None
+        # set by `run`; None keeps every QC figure open for the caller to do as
+        # it likes with (notebooks, `.dev/golden/capture.py`), which is what
+        # calling `align_object` on its own should do
+        self.qc_dir = None
+        self._qc_count = 0
 
     def run(
         self,
@@ -88,11 +95,13 @@ class MultiObjAligner:
         windowed_coarse=True,
         coarse_kwargs=None,
         plot=True,
+        qc_dir=None,
     ):
-        # `plot=False` skips every QC figure. Worth having on a headless run:
-        # the figures are ~4 per object and nothing closes them until the caller
-        # sweeps them at the end (`cli.align_he.save_all_figs`), so on a slide
-        # with many pieces they are all resident at once.
+        # `plot=False` skips every QC figure; `qc_dir` writes each one as soon
+        # as it is drawn (see `_finish_new_figs`) instead of leaving it open for
+        # the caller to collect, so a run that fails partway still leaves the
+        # QC for everything that came before it.
+        self.qc_dir = qc_dir
         self.segment_objects(
             downscale_factor=downscale_factor,
             merge_gap=merge_gap,
@@ -362,7 +371,20 @@ class MultiObjAligner:
             labeled, (downscale_factor, downscale_factor)
         )[: shape[0], : shape[1]]
         if plot_segmentation:
+            # Take the baseline affine first, under its own name. Reading it
+            # registers it lazily when nobody called `seed_baseline_coarse`, and
+            # that registration draws a match figure of its own -- inside
+            # `plot_segmentation`, where the bracket below would file it as a
+            # second "object segmentation". Already seeded (every CLI run), this
+            # finds nothing and writes nothing.
+            figs_before = self._fignums()
+            _ = self.baseline_coarse_affine_matrix
+            self._finish_new_figs(figs_before, "baseline coarse alignment")
+            # bracketed like every other plotting call so it is written and
+            # closed on the same path, even though it hands back its figure
+            figs_before = self._fignums()
             self.plot_segmentation()
+            self._finish_new_figs(figs_before, "object segmentation")
 
     def object_block_mask(self, i, grid_shape=None, threshold=1.0 / 16):
         """Boolean mask over a block grid for object `i`, from its segmentation
@@ -393,10 +415,12 @@ class MultiObjAligner:
     def plot_segmentation(self):
         import matplotlib.cm
         import matplotlib.patches
+        import matplotlib.patheffects as pe
         import matplotlib.pyplot as plt
 
         colors = matplotlib.cm.Set3.colors
-        fig, (ax1, ax2) = plt.subplots(1, 2)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        fig.suptitle("object segmentation")
 
         def _proc_img(img):
             if img_util.is_brightfield_img(img):
@@ -405,31 +429,75 @@ class MultiObjAligner:
 
         ax1.imshow(_proc_img(self.ref_thumbnail), cmap="gray")
         ax2.imshow(_proc_img(self.moving_thumbnail), cmap="gray")
-        bounds = skimage.segmentation.find_boundaries(
-            self.segmentation_mask, mode="thick"
-        ).astype(float)
-        ax1.imshow(
-            np.where(bounds == 0, np.nan, bounds),
-            cmap="cividis",
-            vmin=0,
-            vmax=1,
-            interpolation="none",
+        ax1.set_title("reference (object outline + bbox)", fontsize=8)
+        ax2.set_title(
+            "moving (bbox through the baseline coarse affine;\n"
+            "dashed = the axis-aligned crop taken from it)",
+            fontsize=8,
         )
-        for idx, (rs, re, cs, ce) in enumerate(self.bbox_ref_thumbnail):
+        tform = skimage.transform.AffineTransform(self.baseline_coarse_affine_matrix)
+        for idx, (label, (rs, re, cs, ce), (rs2, re2, cs2, ce2)) in enumerate(
+            zip(
+                self._object_labels,
+                self.bbox_ref_thumbnail,
+                self.bbox_moving_thumbnail,
+            )
+        ):
             color = colors[idx % len(colors)]
+            # a contour, not `find_boundaries`: a raster outline at thumbnail
+            # resolution aliases into dashes once the figure is rendered small,
+            # and one shared color cannot say which object a boundary belongs to
+            ax1.contour(
+                self.segmentation_mask == label,
+                levels=[0.5],
+                colors=[color],
+                linewidths=0.8,
+            )
             mpatch = matplotlib.patches.Rectangle(
                 (cs, rs), ce - cs, re - rs, fill=False, edgecolor=color
             )
             ax1.add_patch(mpatch)
+            # bboxes of neighbouring pieces overlap heavily on a diagonal slide,
+            # so label each one with the index the QC summary and the logs use
+            for ax, (x, y) in [(ax1, (cs, rs)), (ax2, (cs2, rs2))]:
+                ax.text(
+                    x,
+                    y,
+                    f" {idx}",
+                    color=color,
+                    va="top",
+                    fontsize=9,
+                    fontweight="bold",
+                    path_effects=[pe.withStroke(linewidth=1.5, foreground="black")],
+                )
 
             corners = mpatch.get_corners()
-            tform = skimage.transform.AffineTransform(
-                self.baseline_coarse_affine_matrix
-            )
             mpathc2 = matplotlib.patches.Polygon(
                 tform.inverse(corners), fill=False, edgecolor=color
             )
             ax2.add_patch(mpathc2)
+            # what is actually cropped for the object's coarse fit: the mapped
+            # box is a parallelogram, the crop is its axis-aligned hull clipped
+            # to the image, and a bad affine shows up as the two disagreeing
+            ax2.add_patch(
+                matplotlib.patches.Rectangle(
+                    (cs2, rs2),
+                    ce2 - cs2,
+                    re2 - rs2,
+                    fill=False,
+                    edgecolor=color,
+                    linestyle="--",
+                    linewidth=0.8,
+                )
+            )
+        for ax, img in [(ax1, self.ref_thumbnail), (ax2, self.moving_thumbnail)]:
+            # patches drawn outside the image must not rescale the panel
+            ax.set_xlim(0, img.shape[1])
+            ax.set_ylim(img.shape[0], 0)
+            ax.set_axis_off()
+            # the two thumbnails have different aspect ratios; hang both from
+            # the top so each stays under its own title
+            ax.set_anchor("N")
         return fig
 
     @property
@@ -676,7 +744,7 @@ class MultiObjAligner:
                     **coarse_kwargs,
                 )
             c21l.coarse_affine_matrix = _mx
-            self._title_new_figs(figs_before, f"Object {i} (coarse alignment)")
+            self._finish_new_figs(figs_before, f"Object {i} (coarse alignment)")
             candidates.append(("object", c21l.coarse_affine_matrix))
 
         # per-object block region from the segmentation label (not bbox), so
@@ -689,7 +757,9 @@ class MultiObjAligner:
             refined, refine_stats = align_refine.refine_affine_by_block_translation(
                 c21l, block_mask=block_mask, plot=plot_shifts
             )
-            self._title_new_figs(figs_before, f"Object {i} (coarse affine refinement)")
+            self._finish_new_figs(
+                figs_before, f"Object {i} (coarse affine refinement)"
+            )
             if refined is not None:
                 c21l.coarse_affine_matrix = refined
                 candidates.append(("object+refine", c21l.coarse_affine_matrix))
@@ -718,13 +788,18 @@ class MultiObjAligner:
         shift_plotter = mr
         plot_failed = False
         if plot_shifts:
+            figs_before = self._fignums()
             try:
-                figs_before = self._fignums()
                 shift_plotter.plot_shifts()
-                self._title_new_figs(figs_before, f"Object {i} (block shifts)")
             except Exception as e:
                 plot_failed = True
                 logger.warning(f"Failed plotting shifts for object {i}: {e}")
+            finally:
+                # in `finally` so a call that raised partway still hands over
+                # what it drew: with nothing sweeping the open figures at the
+                # end of the run any more, a figure left behind here is one
+                # nothing will ever write or close
+                self._finish_new_figs(figs_before, f"Object {i} (block shifts)")
 
         in_object = np.asarray(block_mask).ravel()
         magnitudes = np.linalg.norm(np.asarray(shifts)[in_object], axis=1)
@@ -809,21 +884,54 @@ class MultiObjAligner:
 
         return tuple(plt.get_fignums())
 
-    @staticmethod
-    def _title_new_figs(before, title):
-        """Title whatever figures a plotting call just created, if any.
+    def _finish_new_figs(self, before, title):
+        """Title whatever figures a plotting call just created, and -- when a
+        `qc_dir` is set -- write and close them right there.
 
-        `plt.gcf()` *creates* a figure when none is open, so titling "the
-        current figure" after a call that drew nothing yields a blank figure
-        carrying a real title -- which the caller then saves as QC (or, worse,
-        stamps onto an unrelated figure that happened to be current).
+        Writing per figure, rather than sweeping the open figures once at the
+        end of the run, is what makes the QC survive a failure: a crash on
+        object 5 leaves objects 0-4 *and* object 5's earlier stages on disk.
+        It also bounds memory at one figure instead of ~3 per object, and drops
+        the need to route the name through the figure's title and read it back
+        out to build a filename.
+
+        The figures come from a fignum diff rather than a return value because
+        a plotting call may draw one figure, several, or none, and callers deep
+        in `register_coarse` discard a losing route's figure before returning.
+        `plt.gcf()` would *create* a figure when none is open, yielding a blank
+        one carrying a real title (or stamping it onto an unrelated figure that
+        happened to be current).
         """
         import matplotlib.pyplot as plt
 
         new = [n for n in plt.get_fignums() if n not in before]
         for num in new:
-            plt.figure(num).suptitle(title)
+            fig = plt.figure(num)
+            fig.suptitle(title)
+            if self.qc_dir is not None:
+                self._write_fig(fig, title)
+                plt.close(fig)
         return bool(new)
+
+    # QC figures are written at 144 dpi, which is legible for a whole-slide
+    # thumbnail without the 2-3x file size of the print-oriented default
+    QC_DPI = 144
+
+    def _write_fig(self, fig, title):
+        """Write one QC figure into `qc_dir`, numbered in creation order.
+
+        The number is a plain counter, not the matplotlib figure number, which
+        restarts at 1 whenever the open figures all close and so cannot order a
+        run. The name comes from the caller's title -- several figures can share
+        one (a plotting call that drew two), and the counter keeps those apart.
+        """
+        qc_dir = pathlib.Path(self.qc_dir)
+        qc_dir.mkdir(exist_ok=True, parents=True)
+        self._qc_count += 1
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        path = qc_dir / f"{self._qc_count:02d}-{slug}.png"
+        fig.savefig(path, dpi=self.QC_DPI, bbox_inches="tight")
+        logger.debug(f"Wrote QC figure {path}")
 
     @staticmethod
     def _format_refine(stats):

@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from loguru import logger
 
-from . import img_util, register_util, register
+from . import img_util, plot_util, register_util, register
 
 
 def masked_match_histograms(img, ref_img, mask=None, ref_mask=None):
@@ -494,10 +494,15 @@ def _plot_windowed_qc(
     # the image and opens a gap under the title. TOP_IN is left free for the axes
     # titles plus a suptitle the caller may add (`cli.align_he`).
     LEFT_IN, BOTTOM_IN, TOP_IN, GAP_IN, LOC_IN = 0.8, 0.4, 0.6, 0.15, 1.4
-    figw = fig.get_figwidth()
     mh, mw = main.images[0].get_array().shape[:2]
-    main_w = figw - LEFT_IN - GAP_IN - LOC_IN - 0.1
+    # the match panel gets the same inches-per-image-pixel as a single-panel
+    # coarse plot (`plot_util.size_axes_to_image`, which already sized this
+    # figure), and the locator column is added around it -- rather than reading
+    # back the figure width and dividing it up, which silently rescales the
+    # match panel whenever that upstream sizing changes
+    main_w = mw / plot_util.IMAGE_PX_PER_INCH
     main_h = main_w * mh / mw
+    figw = LEFT_IN + main_w + GAP_IN + LOC_IN + 0.1
     figh = BOTTOM_IN + main_h + TOP_IN
     fig.set_size_inches(figw, figh)
     main.set_position(
@@ -548,9 +553,10 @@ def _fignums():
 def _close_figs_since(before):
     """Close figures opened since `before`, so an abandoned route leaves none.
 
-    QC figures are collected by whoever saves them (`cli.align_he.save_all_figs`
-    sweeps every open figure), so a figure for a route that lost has to be
-    closed rather than merely ignored. `before=None` means nothing was plotted.
+    QC figures are collected by whoever saves them -- `cli.align_he.save_all_figs`
+    sweeps every open figure, `MultiObjAligner._finish_new_figs` takes whatever
+    appeared during the call -- so a figure for a route that lost has to be closed
+    rather than merely ignored. `before=None` means nothing was plotted.
     """
     if before is None:
         return

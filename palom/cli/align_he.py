@@ -8,7 +8,6 @@ import skimage.exposure
 from loguru import logger
 
 import palom
-from palom.plot_util import set_subplot_size
 
 
 def align_he(
@@ -119,17 +118,8 @@ def align_he(
     ax.set_title(
         "\n".join(filter(None, [ax.get_title(), f"ref: {p1.name}"])), fontsize=6
     )
-    if len(fig.axes) == 1:
-        # whole-image single-panel plot: size the subplot to the match image
-        im_h, im_w = ax.images[0].get_array().shape
-        set_subplot_size(im_w / 288, im_h / 288, ax=ax)
-        ax.set_anchor("N")
-        # use 0.5 inch on the top for figure title -- grow the figure to make
-        # room instead of eating into the axes, which fails outright
-        # (`bottom cannot be >= top`) when the match image is under ~0.5 inch
-        figw, figh = fig.get_size_inches()
-        fig.set_size_inches(figw, figh + 0.5)
-        fig.subplots_adjust(top=1 - 0.5 / (figh + 0.5))
+    # no sizing here: `plot_util.size_axes_to_image` runs where the figure is
+    # drawn, so this one and the per-object coarse plots match
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
 
     if viz_coarse_napari:
@@ -169,9 +159,10 @@ def align_he(
             # the same coarse budget/workers the baseline fit above used, so
             # every coarse registration in the run is the same registration
             coarse_kwargs=dict(n_keypoints=n_keypoints, n_workers=coarse_n_workers),
-        )
-        save_all_figs(
-            out_dir=out_dir / "qc" / p2.stem, format="png", dpi=144, prefix=p2.name
+            # each QC figure is written as it is drawn rather than swept up
+            # here, so a run that dies on object 5 still leaves the figures for
+            # objects 0-4 -- and object 5's earlier stages -- to look at
+            qc_dir=out_dir / "qc" / p2.stem,
         )
         block_mx = mo_aligner.block_affine_matrices_da
 
@@ -281,14 +272,17 @@ def set_matplotlib_font(font_size=12):
     matplotlib.rcParams.update({"font.size": font_size})
 
 
-def save_all_figs(dpi=300, format="pdf", out_dir=None, prefix=None):
+def save_all_figs(dpi=300, format="pdf", out_dir=None):
+    """Write and close every open figure, naming each from its suptitle.
+
+    The only caller left is the coarse QC flush, where exactly one figure is
+    open and the sweep is unambiguous. Everything the multi-object run draws is
+    written by `MultiObjAligner` as it goes (`run(qc_dir=...)`), so this no
+    longer has to guess which of the open figures belong to the stage that just
+    finished -- nor rename them after the fact, which is what the old `prefix`
+    did.
+    """
     figs = [plt.figure(i) for i in plt.get_fignums()]
-    if prefix is not None:
-        for f in figs:
-            if f._suptitle:
-                f.suptitle(f"{prefix} {f._suptitle.get_text()}")
-            else:
-                f.suptitle(prefix)
     names = [f._suptitle.get_text() if f._suptitle else "" for f in figs]
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(exist_ok=True, parents=True)

@@ -261,7 +261,7 @@ def _plot_shift_field(
     import matplotlib.patheffects as pe
     import matplotlib.pyplot as plt
 
-    from .plot_util import set_subplot_size
+    from .plot_util import size_axes_to_image
 
     thumb = np.asarray(aligner.ref_thumbnail).astype("float32")
     im_h, im_w = thumb.shape[:2]
@@ -332,11 +332,5 @@ def _plot_shift_field(
     # size the axes to the thumbnail instead of a hard-coded figsize, but keep
     # a floor: this plot's title and colorbar carry more text than the coarse
     # match plot and would dwarf a small thumbnail
-    w_in, h_in = im_w / 288, im_h / 288
-    if w_in < 5:
-        w_in, h_in = 5, h_in * 5 / w_in
-    set_subplot_size(w_in, h_in, ax=ax)
-    ax.set_anchor("N")
-    # use 0.5 inch on the top for figure title
-    fig.subplots_adjust(top=1 - 0.5 / fig.get_size_inches()[1])
+    size_axes_to_image(ax, min_w_in=5)
     return fig

@@ -12,7 +12,7 @@ import skimage.feature
 import skimage.registration
 from loguru import logger
 
-from . import img_util, register_util
+from . import img_util, plot_util, register_util
 
 if hasattr(skimage.registration, 'phase_cross_correlation'):
     register_translation = skimage.registration.phase_cross_correlation
@@ -164,6 +164,10 @@ def ensambled_match(
         for line in ax.get_lines():
             line.set_alpha(0.5)
             line.set_linewidth(.5)
+        # sized here, at the one place this figure is created, so every coarse
+        # match plot comes out at the same scale -- whole-slide and per-object
+        # alike. Callers only add titles.
+        plot_util.size_axes_to_image(ax)
 
     return (t_matrix, mask) if return_match_mask else t_matrix
 
