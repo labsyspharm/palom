@@ -12,10 +12,13 @@ from palom.align_multi_res import MultiResAligner
 
 
 class _FakeRung:
-    def __init__(self, shifts, valid):
+    def __init__(self, shifts, valid, errors=None):
         self.shifts = np.asarray(shifts, dtype=float)
         self.original_shifts = np.where(
             np.asarray(valid)[:, None], self.shifts, self.shifts + 99
+        )
+        self.shift_errors = (
+            np.zeros(len(self.shifts)) if errors is None else np.asarray(errors, float)
         )
         self.grid_shape = (1, len(self.shifts))
 

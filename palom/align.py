@@ -246,18 +246,25 @@ def _pc(img1, img2, mask, **pcc_kwargs):
 
 
 def block_shifts(ref_img, moving_img, mask=True, pcc_kwargs=None):
+    """Per-block ``(dy, dx, error)`` against the affine-warped moving image.
+
+    `error` is `register.phase_cross_correlation`'s
+    ``-log(peak / total_amplitude)`` -- lower is better, `inf` for a masked-out
+    or constant block. It used to be computed and thrown away here, leaving
+    `constrain_block_shifts`' two triangle thresholds as the only thing
+    deciding which blocks to trust: a block that correlated on a stitching
+    seam, on background, or on the wrong tissue after an FFT wrap-quadrant
+    flip was indistinguishable from a good one.
+    """
     default_pcc_kwargs = dict(sigma=0, upsample=1)
     if pcc_kwargs is None:
         pcc_kwargs = {}
-    return da.map_blocks(
-        lambda a, b, m: np.atleast_2d(
-            _pc(a, b, m, **{**default_pcc_kwargs, **pcc_kwargs})[0]
-        ),
-        ref_img,
-        moving_img,
-        mask,
-        dtype=np.float32
-    )
+
+    def _block(a, b, m):
+        (dy, dx), error = _pc(a, b, m, **{**default_pcc_kwargs, **pcc_kwargs})
+        return np.atleast_2d([dy, dx, error])
+
+    return da.map_blocks(_block, ref_img, moving_img, mask, dtype=np.float32)
 
 
 def constrain_block_shifts(shifts, grid_shape):
@@ -489,7 +496,12 @@ class Aligner:
             ascii=True, desc=f'Computing shifts ({self.grid_shape})',
         ):
             shifts = shifts_da.compute()
-        self.shifts = shifts.reshape(-1, 2)
+        # (dy, dx, error) per block, row-major over the grid. `shifts` stays
+        # (N, 2) so every existing consumer is untouched; the confidence is a
+        # parallel array rather than a wider one.
+        shifts = shifts.reshape(-1, 3)
+        self.shifts = shifts[:, :2]
+        self.shift_errors = shifts[:, 2]
 
     @property
     def grid_shape(self):

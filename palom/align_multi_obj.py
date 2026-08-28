@@ -803,6 +803,23 @@ class MultiObjAligner:
 
         in_object = np.asarray(block_mask).ravel()
         magnitudes = np.linalg.norm(np.asarray(shifts)[in_object], axis=1)
+        # Phase-correlation confidence of the blocks this object actually uses.
+        # Reported, not yet acted on -- `constrain_block_shifts`' triangle
+        # thresholds still decide validity. Logged so a threshold can be
+        # calibrated on real slides before anything depends on it.
+        errors = np.asarray(mr.shift_errors)[in_object]
+        finite = errors[np.isfinite(errors)]
+        err_stats = {
+            "median": float(np.median(finite)) if finite.size else None,
+            "p90": float(np.percentile(finite, 90)) if finite.size else None,
+            "frac_inf": float((~np.isfinite(errors)).mean()) if errors.size else None,
+        }
+        if finite.size:
+            logger.info(
+                f"Object {i} block PC error: median {err_stats['median']:.3f},"
+                f" p90 {err_stats['p90']:.3f},"
+                f" non-finite {100 * err_stats['frac_inf']:.0f}%"
+            )
         self.object_qc.append(
             {
                 "object": i,
@@ -821,6 +838,7 @@ class MultiObjAligner:
                 else None,
                 "shift_max": float(magnitudes.max()) if magnitudes.size else None,
                 "levels": mr.level_histogram(in_object),
+                "pc_error": err_stats,
                 "plot_failed": plot_failed,
             }
         )

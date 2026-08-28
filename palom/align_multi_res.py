@@ -403,6 +403,18 @@ class MultiResAligner:
         self.result_levels = np.where(
             np.any(valid_masks, axis=0), np.take(self.levels, mask), -1
         )
+        # The phase-correlation error of whichever rung supplied each block, on
+        # the finest grid. Not rescaled: it is a correlation confidence, not a
+        # length. `inf` where the winning rung had nothing to measure.
+        errors = np.full((h, w), np.inf)
+        for ii, (aa, idx) in enumerate(zip(aligners, idxs)):
+            # `result_levels == -1` marks the blocks argmax handed to rung 0
+            # without any rung passing; their shift is rung 0's extrapolation,
+            # so rung 0's measured error would misdescribe it. Leave those inf.
+            sel = (mask == ii) & (self.result_levels >= 0)
+            if sel.any():
+                errors[sel] = np.asarray(aa.shift_errors)[idx[sel]]
+        self.shift_errors = errors.ravel()
 
     def level_histogram(self, mask=None):
         """Block counts keyed by the level that supplied the shift, -1 = none.
