@@ -99,6 +99,31 @@ def normalized_phase_correlation(img1, img2, sigma):
 #
 # Feature-based registration
 #
+# `cv2.estimateAffine2D` needs three non-degenerate correspondences. Measured
+# against opencv 4.11: an empty array RAISES; 1-2 points return a None matrix
+# alongside a real mask; collinear or coincident points return a None matrix
+# and an all-zero mask. So the matrix -- never the mask -- is the failure
+# signal, and the empty case has to be kept away from cv2 entirely.
+MIN_AFFINE_POINTS = 3
+
+
+def _no_point_pairs():
+    """An empty correspondence set, shaped and typed so callers can `vstack` it.
+
+    Returned wherever a match cannot be attempted. The previous sentinel was
+    `np.empty((1, 2))` -- uninitialized memory -- so a crop that came back
+    without keypoints fed two random coordinates into `ensambled_match`'s
+    pooled RANSAC, and made `len(p_src)` truthy in
+    `register_coarse.search_best_match_config`. Both are routine: a masked
+    per-object thumbnail is mostly constant fill, and the windowed coarse route
+    scores tiles that land entirely on background.
+    """
+    return (
+        np.empty((0, 2), dtype=np.float32),
+        np.empty((0, 2), dtype=np.float32),
+    )
+
+
 def ensambled_match(
     img_left, img_right,
     n_keypoints=1000, plot_match_result=False,
@@ -129,13 +154,40 @@ def ensambled_match(
     all_src = np.vstack([i[0] for i in all_found])
     all_dst = np.vstack([i[1] for i in all_found])
 
-    t_matrix, mask = cv2.estimateAffine2D(
-        all_dst, all_src,
-        method=cv2.RANSAC,
-        ransacReprojThreshold=ransacReprojThreshold,
-        maxIters=5000
-    )
-    if plot_match_result:
+    # `mask` is always an array with one row per pooled point, the shape cv2
+    # itself returns, so `match.sum()` and `mask.flatten() > 0` are safe for
+    # every caller. `t_matrix is None` stays the single failure signal --
+    # `register_coarse.search_then_register` already tests exactly that.
+    mask = np.zeros((len(all_src), 1), dtype=np.uint8)
+    t_matrix = None
+    if len(all_src) < MIN_AFFINE_POINTS:
+        # `estimateAffine2D` RAISES on an empty array (it only returns
+        # (None, None) for 1-2 points), and every representation coming back
+        # empty is now reachable -- it used to be masked by the garbage
+        # sentinel that `_no_point_pairs` replaced
+        logger.debug(
+            f"Only {len(all_src)} pooled correspondence(s) across the"
+            f" {len(img_pairs)} representations; skipping the affine fit"
+        )
+    else:
+        t_matrix, _mask = cv2.estimateAffine2D(
+            all_dst, all_src,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=ransacReprojThreshold,
+            maxIters=5000
+        )
+        if t_matrix is None:
+            logger.debug(
+                f"RANSAC found no consistent affine among {len(all_src)}"
+                " pooled correspondences"
+            )
+        else:
+            mask = _mask
+    # nothing to draw without a fit, and `plot_matches` on an empty keypoint
+    # set is not worth the special case -- callers bracket their plotting calls
+    # by a fignum diff (`align_multi_obj._finish_new_figs`), so drawing no
+    # figure is expected
+    if plot_match_result and (t_matrix is not None):
         _, ax = plt.subplots()
 
         def _rescale_img(img):
@@ -194,10 +246,15 @@ def cv2_feature_detect_and_match(
         )
     logger.debug(f"keypts L:{len(keypoints_left)}, keypts R:{len(keypoints_right)}")
     if len(keypoints_left) == 0 or len(keypoints_right) == 0:
-        return np.empty((1, 2)), np.empty((1, 2))
+        return _no_point_pairs()
 
     bf_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf_matcher.match(descriptors_left, descriptors_right)
+    if len(matches) < MIN_AFFINE_POINTS:
+        # `np.float32([])` below would be shape (0,) rather than (0, 2), and
+        # there is nothing to fit anyway
+        logger.debug(f"Only {len(matches)} cross-checked match(es); no fit")
+        return _no_point_pairs()
 
     src_pts = np.float32(
         [keypoints_left[m.queryIdx].pt for m in matches]
@@ -209,6 +266,17 @@ def cv2_feature_detect_and_match(
         dst_pts, src_pts,
         method=cv2.RANSAC, ransacReprojThreshold=30, maxIters=5000
     )
+    if t_matrix is None or mask is None:
+        # No consistent subset -- collinear or coincident correspondences.
+        # cv2 4.11 returns an all-zero mask here rather than None, so the old
+        # code already fell through to an empty selection; the `mask is None`
+        # half is defensive, since the binding maps an empty Mat to None and
+        # pyproject pins no upper bound on opencv. Returning early also keeps
+        # `plot_match_result` from drawing a figure with nothing in it.
+        logger.debug(
+            f"RANSAC found no consistent affine among {len(matches)} matches"
+        )
+        return _no_point_pairs()
     if plot_match_result == True:
         plt.figure()
         imgmatch_ransac = cv2.drawMatches(

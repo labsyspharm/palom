@@ -109,10 +109,16 @@ def search_best_match_config(
             i1, i2, n_keypoints=n_keypoints
         )
         valid_match = np.zeros(1, dtype="int")
-        if len(p_src):
-            _affine_mx, valid_match = cv2.estimateAffine2D(
+        # same guard as `register.ensambled_match`: `estimateAffine2D` raises
+        # on an empty array, and returns a None matrix for 1-2 points. The old
+        # `if len(p_src)` was never False, because a keypoint-less crop came
+        # back with the two-element garbage sentinel.
+        if len(p_src) >= register.MIN_AFFINE_POINTS:
+            _affine_mx, _valid_match = cv2.estimateAffine2D(
                 p_dst, p_src, method=cv2.RANSAC, ransacReprojThreshold=5, maxIters=5000
             )
+            if _valid_match is not None:
+                valid_match = _valid_match
         results.append((valid_match.sum(), cc))
         logger.debug(
             f"{valid_match.sum():6} matches, {cc[0]:5} {cc[1]:4} {cc[2].__name__:6}"
