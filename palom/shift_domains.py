@@ -38,6 +38,14 @@ MIN_DOMAIN_BLOCKS = 2
 
 LOOSE = -1
 
+# Below this share of a region resolved into domains, the partition is islands
+# in noise rather than a partition, and its offsets should not be read as
+# findings. Not a reason to stop: ImageLSP23390 covers 37% because tissue was
+# genuinely lost between the two scans, and the run is still wanted -- it is a
+# reason to flag the slide for review. Provisional, set from four slides
+# (37% / 93% / 98% / 100%).
+LOW_COVERAGE = 0.75
+
 
 def _agreement_edges(field, valid, tol):
     """Row/column neighbour pairs whose shifts agree within `tol`.

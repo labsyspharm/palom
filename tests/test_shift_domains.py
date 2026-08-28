@@ -246,3 +246,39 @@ def test_qc_summary_survives_rows_without_domain_info():
         levels={0: 10}, plot_failed=False,
     )]
     assert "baseline" in mo.qc_summary()
+
+
+def test_low_coverage_is_flagged_for_review_not_failed():
+    """Tissue lost between scans reads as low coverage; the run still proceeds."""
+    from palom.align_multi_obj import MultiObjAligner
+
+    def row(cov, dom):
+        return dict(
+            object=0, label=1, n_blocks=300, affine="object", preferred="object",
+            scores={"object": 0.3}, refine=None, shift_median=5.0, shift_max=50.0,
+            levels={0: 300}, plot_failed=False,
+            domains=dict(domains=dom, separation=99.0, coverage=cov),
+        )
+
+    mo = MultiObjAligner.__new__(MultiObjAligner)
+    mo.object_qc = [row(0.37, list(range(19)))]
+    out = mo.qc_summary()
+    assert "REVIEW: shift field mostly unresolved" in out
+    assert "1 for review" in out
+
+    mo.object_qc = [row(0.93, [1, 2, 3])]
+    assert "REVIEW" not in mo.qc_summary()
+
+
+def test_coverage_of_zero_is_not_flagged_twice():
+    """An object with no domains at all has coverage 0 and no partition to doubt."""
+    from palom.align_multi_obj import MultiObjAligner
+
+    mo = MultiObjAligner.__new__(MultiObjAligner)
+    mo.object_qc = [dict(
+        object=0, label=1, n_blocks=5, affine="baseline", preferred="baseline",
+        scores={"baseline": 0.3}, refine=None, shift_median=1.0, shift_max=2.0,
+        levels={0: 5}, plot_failed=False,
+        domains=dict(domains=[], separation=0.0, coverage=0.0),
+    )]
+    assert "REVIEW" not in mo.qc_summary()

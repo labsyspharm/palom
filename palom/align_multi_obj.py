@@ -799,10 +799,18 @@ class MultiObjAligner:
         # QC: show the per-rung selection, not just the combined field
         shift_plotter = mr
         plot_failed = False
+        in_object = np.asarray(block_mask).ravel()
+        domain_labels = shift_domains.label_domains(
+            np.asarray(shifts),
+            mr.aligners[0].grid_shape,
+            valid=(np.asarray(mr.result_levels) >= 0)
+            & in_object.reshape(mr.aligners[0].grid_shape),
+            tol=domain_tol,
+        )
         if plot_shifts:
             figs_before = self._fignums()
             try:
-                shift_plotter.plot_shifts()
+                shift_plotter.plot_shifts(domain_labels=domain_labels)
             except Exception as e:
                 plot_failed = True
                 logger.warning(f"Failed plotting shifts for object {i}: {e}")
@@ -813,7 +821,6 @@ class MultiObjAligner:
                 # nothing will ever write or close
                 self._finish_new_figs(figs_before, f"Object {i} (block shifts)")
 
-        in_object = np.asarray(block_mask).ravel()
         magnitudes = np.linalg.norm(np.asarray(shifts)[in_object], axis=1)
         # Phase-correlation confidence of the blocks this object actually uses.
         # Reported, not yet acted on -- `constrain_block_shifts`' triangle
@@ -837,14 +844,6 @@ class MultiObjAligner:
         # Reported only -- the warp still treats the object as one piece. A
         # block is trusted where some rung actually resolved it; `result_levels
         # == -1` marks the ones carrying rung 0's extrapolation.
-        domain_labels = shift_domains.label_domains(
-            np.asarray(shifts),
-            mr.aligners[0].grid_shape,
-            valid=(np.asarray(mr.result_levels) >= 0) & in_object.reshape(
-                mr.aligners[0].grid_shape
-            ),
-            tol=domain_tol,
-        )
         domain_stats = shift_domains.summarize(
             np.asarray(shifts),
             domain_labels,
@@ -1058,7 +1057,7 @@ class MultiObjAligner:
             f" {'lvl%':>14}  notes"
         )
         lines = [head, "  " + "-" * (len(head) - 2)]
-        n_fallback = n_rejected = 0
+        n_fallback = n_rejected = n_low_coverage = 0
         for r in qc:
             # `align_object` records what it actually preferred; fall back to
             # the candidate order for rows built by hand (the self-checks)
@@ -1082,6 +1081,12 @@ class MultiObjAligner:
                     f"{len(dom['domains'])} domains, max sep"
                     f" {dom['separation']:.0f}px, {100 * dom['coverage']:.0f}% covered"
                 )
+            # Flagged, not fatal: low coverage has legitimate causes -- tissue
+            # genuinely lost between the two scans reads exactly like this --
+            # so the run proceeds and the slide goes on the review list.
+            if 0 < dom.get("coverage", 1.0) < shift_domains.LOW_COVERAGE:
+                notes.append("REVIEW: shift field mostly unresolved")
+                n_low_coverage += 1
             if r["plot_failed"]:
                 notes.append("shift plot failed")
             if r["object"] in excluded:
@@ -1099,8 +1104,9 @@ class MultiObjAligner:
         tail = [
             f"  {len(qc)} object(s); {n_fallback} fell back to a lower-ranked"
             f" affine, {n_rejected} refinement(s) rejected"
+            + (f", {n_low_coverage} for review" if n_low_coverage else "")
         ]
-        if n_fallback or n_rejected:
+        if n_fallback or n_rejected or n_low_coverage:
             tail.append("  ^ check the per-object QC figures for these")
         tail.append(
             "  lvl% = share of blocks resolved per pyramid level, finest first;"

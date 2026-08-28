@@ -430,7 +430,7 @@ class MultiResAligner:
             for k, v in zip(*np.unique(levels, return_counts=True))
         }
 
-    def plot_shifts(self, max_radius=None):
+    def plot_shifts(self, max_radius=None, domain_labels=None):
         import matplotlib.colors
         import matplotlib.figure
         import matplotlib.pyplot as plt
@@ -478,9 +478,14 @@ class MultiResAligner:
         
         flow_extent = flow.get_img_extent(shape, self.block_footprints[0][0])
 
-        w, h = matplotlib.figure.figaspect(shape[0] / (shape[1] * 3))
+        # A fourth panel only when there is a partition to show. Without it
+        # the domains are visible as log text alone, which cannot answer the
+        # question the figure exists for: *where* are they.
+        n_panels = 3 + (domain_labels is not None)
+        widths = (.5, 1, 1) + ((1,) if domain_labels is not None else ())
+        w, h = matplotlib.figure.figaspect(shape[0] / (shape[1] * n_panels))
         fig = plt.figure(figsize=(w, h))
-        gs = fig.add_gridspec(1, 3, width_ratios=(.5, 1, 1))
+        gs = fig.add_gridspec(1, n_panels, width_ratios=widths)
 
         ax1 = fig.add_subplot(gs[1])
         ax1.imshow(np.log1p(thumbnail), alpha=1, extent=thumbnail_extent, cmap='gray')
@@ -508,6 +513,43 @@ class MultiResAligner:
 
         cbar = plt.colorbar(im, cax=cax, ticks=range(len(self.valid_masks)))
         cbar.set_ticklabels(self.levels)
+
+        if domain_labels is not None:
+            labels = np.asarray(domain_labels)
+            ax3 = fig.add_subplot(gs[3], sharex=ax1, sharey=ax1)
+            ax3.imshow(
+                np.log1p(thumbnail), alpha=1, extent=thumbnail_extent, cmap="gray"
+            )
+            n_dom = int(labels.max()) + 1
+            if n_dom > 0:
+                # tab20 rather than Set3: adjacent domains have to be told
+                # apart, and Set3's pastels wash out over the backdrop
+                dcmap = matplotlib.colors.ListedColormap(
+                    matplotlib.colormaps["tab20"].colors[: max(n_dom, 1)]
+                )
+                # loose blocks are transparent, not a colour -- they are the
+                # absence of a domain, and colouring them invents one
+                dim = ax3.imshow(
+                    np.where(labels >= 0, labels, 0),
+                    extent=flow_extent, alpha=0.55 * (labels >= 0),
+                    cmap=dcmap, vmin=-0.5, vmax=n_dom - 0.5,
+                )
+                dcax = make_axes_locatable(ax3).append_axes(
+                    "right", size="5%", pad=0.05
+                )
+                cb = plt.colorbar(dim, cax=dcax, ticks=range(n_dom))
+                cb.set_label("domain", fontsize=6)
+            else:
+                make_axes_locatable(ax3).append_axes(
+                    "right", size="5%", pad=0.05
+                ).axis("off")
+            # Deliberately no loose count: `plot_shifts` does not know which
+            # blocks belong to the object, so it can only count the whole grid
+            # -- 650 "loose" for an object of 1698 blocks that is 100% covered.
+            # Loose blocks are visible here as transparency, and the log line
+            # carries the count bounded to the object.
+            ax3.set_title(f"{n_dom} domain(s)", fontsize=6)
+            ax3.axis("off")
 
         _ = flow.plot_legend(
             np.array([*shifts, mask]),
