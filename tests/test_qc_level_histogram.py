@@ -22,7 +22,7 @@ class _FakeRung:
         )
         self.grid_shape = (1, len(self.shifts))
 
-    def constrain_shifts(self):
+    def constrain_shifts(self, domain_tol=None):
         pass
 
 

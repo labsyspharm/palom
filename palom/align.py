@@ -268,42 +268,128 @@ def block_shifts(ref_img, moving_img, mask=True, pcc_kwargs=None):
 
 
 def constrain_block_shifts(shifts, grid_shape):
+    """Fit one plane over the whole grid and replace the blocks that miss it.
+
+    Assumes the field has a single trend. Where it does not -- two tissue
+    pieces at different rigid offsets, or the two sides of a stitching seam --
+    `threshold_triangle` assumes a unimodal residual histogram, lands between
+    the modes, and the minority is overwritten by the plane's prediction.
+    Measured on a synthetic two-domain field 67px apart, the minority's offset
+    is destroyed in full at every fraction from 50% down to 8%.
+
+    `constrain_block_shifts_by_domain` is the same fit at domain scope.
+    """
+    return _constrain_subset(shifts, np.indices(grid_shape).reshape(2, -1).T)
+
+
+def _plane_prediction(shifts, block_coords):
+    """Per-block prediction from a plane fit to the high-confidence blocks.
+
+    `None` when there is no trend to fit: fewer than three finite shifts, no
+    spread among them, or fewer than three surviving the confidence threshold.
+    """
+    shifts = np.asarray(shifts, dtype=float)
     distances = np.linalg.norm(shifts, axis=1)
-    is_finite = np.isfinite(distances)
-    finite_distances = distances[is_finite]
-    # Not enough finite shifts, or no spread among them (e.g. a masked region
-    # with very few valid blocks, or blocks that all returned the same shift):
-    # there is no trend to fit and `threshold_triangle` would choke on a
-    # degenerate histogram, so leave the shifts as-is.
+    finite_distances = distances[np.isfinite(distances)]
     if finite_distances.size < 3 or np.ptp(finite_distances) == 0:
-        return shifts
-    # exclude np.inf when computing threshold
-    threshold_distance = skimage.filters.threshold_triangle(finite_distances)
-
-    high_confidence_blocks = distances < threshold_distance
+        return None
+    high_confidence_blocks = distances < skimage.filters.threshold_triangle(
+        finite_distances
+    )
     if high_confidence_blocks.sum() < 3:
-        return shifts
-
+        return None
     lr = sklearn.linear_model.LinearRegression()
-    block_coords = np.indices(grid_shape).reshape(2, -1).T
-    lr.fit(
-        block_coords[high_confidence_blocks],
-        shifts[high_confidence_blocks]
-    )
-    predicted_shifts = lr.predict(block_coords)
-    diffs = shifts - predicted_shifts
-    distance_diffs = np.linalg.norm(diffs, axis=1)
+    lr.fit(block_coords[high_confidence_blocks], shifts[high_confidence_blocks])
+    return lr.predict(block_coords)
+
+
+def _replace_blocks_missing_the_model(shifts, predicted):
+    """Replace the blocks whose residual against `predicted` is an outlier.
+
+    The threshold is `threshold_triangle` over *all* the residuals handed in,
+    which is why the per-domain path fits its planes separately but thresholds
+    once. Thresholding per domain instead shrinks the threshold to each
+    domain's own (tight) residual spread, and rejects blocks that are barely
+    off: measured on the reference slides that dropped the finest-level share
+    of a single-domain control from 89% to 39%.
+    """
+    shifts = np.asarray(shifts, dtype=float)
+    is_finite = np.isfinite(np.linalg.norm(shifts, axis=1))
+    distance_diffs = np.linalg.norm(shifts - predicted, axis=1)
     finite_diffs = distance_diffs[is_finite]
-    if np.ptp(finite_diffs) == 0:
+    if finite_diffs.size == 0 or np.ptp(finite_diffs) == 0:
         return shifts
-    passed = (
-        distance_diffs <
-        # exclude np.inf when computing threshold
-        skimage.filters.threshold_triangle(finite_diffs)
-    )
+    passed = distance_diffs < skimage.filters.threshold_triangle(finite_diffs)
     fitted_shifts = shifts.copy()
-    fitted_shifts[~passed] = predicted_shifts[~passed]
+    fitted_shifts[~passed] = predicted[~passed]
     return fitted_shifts
+
+
+def _constrain_subset(shifts, block_coords):
+    """`constrain_block_shifts`' logic over an arbitrary set of blocks.
+
+    `block_coords` are the (row, col) grid positions of `shifts`, so the plane
+    is fit in grid space whether the caller passes the whole grid or one
+    domain's blocks.
+    """
+    predicted = _plane_prediction(shifts, block_coords)
+    if predicted is None:
+        return np.asarray(shifts, dtype=float)
+    return _replace_blocks_missing_the_model(shifts, predicted)
+
+
+def constrain_block_shifts_by_domain(shifts, grid_shape, tol=None, min_size=None):
+    """One plane per domain of agreeing shifts, instead of one over the grid.
+
+    Each domain's plane is fit only to its own blocks, so a minority domain is
+    no longer measured against the majority's trend and thresholded away. This
+    is what lets a per-piece offset reach the displacement field at the
+    resolution it was measured at: a flattened block fails
+    `MultiResAligner`'s `original == constrained` validity test, is marked
+    invalid at that rung, and the cross-rung pick falls to a coarser one --
+    which is why the multi-piece slides are the ones with high coarse-level
+    share, and why one slide's domain offsets came back as exact multiples of
+    8, the level-3 quantisation.
+
+    Blocks in no domain agreed with nothing, so they keep the whole-grid
+    behaviour: they take the global plane's prediction and stay flagged.
+    """
+    from . import shift_domains
+
+    tol = shift_domains.DEFAULT_TOL if tol is None else tol
+    min_size = shift_domains.MIN_DOMAIN_BLOCKS if min_size is None else min_size
+    shifts = np.asarray(shifts, dtype=float)
+    labels = shift_domains.label_domains(
+        shifts, grid_shape, tol=tol, min_size=min_size
+    )
+    if labels.max() < 0:
+        # nothing agreed with anything; there is no partition to respect
+        return constrain_block_shifts(shifts, grid_shape)
+
+    coords = np.indices(grid_shape).reshape(2, -1).T
+    flat = labels.ravel()
+    # Fit a plane per domain, but threshold once over all the residuals. Two
+    # separate steps on purpose -- see `_replace_blocks_missing_the_model`.
+    predicted = np.full(shifts.shape, np.nan)
+    for label in range(int(labels.max()) + 1):
+        sel = flat == label
+        # below three blocks there is no plane to fit, and two agreeing blocks
+        # are not enough to be trusted as a trend of their own
+        if sel.sum() >= 3:
+            domain_prediction = _plane_prediction(shifts[sel], coords[sel])
+            if domain_prediction is not None:
+                predicted[sel] = domain_prediction
+
+    # blocks no domain plane covers -- loose ones, and domains too small or too
+    # flat to fit -- fall back to the whole-grid trend
+    uncovered = np.isnan(predicted).any(axis=1)
+    if uncovered.any():
+        global_prediction = _plane_prediction(shifts, coords)
+        if global_prediction is None:
+            return constrain_block_shifts(shifts, grid_shape)
+        predicted[uncovered] = global_prediction[uncovered]
+
+    return _replace_blocks_missing_the_model(shifts, predicted)
 
 
 def viz_shifts(shifts, grid_shape, dcenter=None, ax=None):
@@ -511,13 +597,20 @@ class Aligner:
     def num_blocks(self):
         return self.ref_img.npartitions
 
-    def constrain_shifts(self):
+    def constrain_shifts(self, domain_tol=None):
+        # `domain_tol=None` keeps the single whole-grid plane. Passing one fits
+        # a plane per domain of agreeing shifts instead, so a minority domain
+        # is not measured against the majority's trend and thresholded away.
         if not hasattr(self, 'original_shifts'):
             self.original_shifts = self.shifts.copy()
-        self.shifts = constrain_block_shifts(
-            self.original_shifts,
-            self.grid_shape
-        )
+        if domain_tol is None:
+            self.shifts = constrain_block_shifts(
+                self.original_shifts, self.grid_shape
+            )
+        else:
+            self.shifts = constrain_block_shifts_by_domain(
+                self.original_shifts, self.grid_shape, tol=domain_tol
+            )
    
     @property
     def block_affine_matrices(self):

@@ -38,6 +38,10 @@ MIN_DOMAIN_BLOCKS = 2
 
 LOOSE = -1
 
+# Default agreement tolerance, in the same pixels as the shifts. See
+# `align_multi_obj.DEFAULT_DOMAIN_TOL` for how it was chosen.
+DEFAULT_TOL = 20.0
+
 # Below this share of a region resolved into domains, the partition is islands
 # in noise rather than a partition, and its offsets should not be read as
 # findings. Not a reason to stop: ImageLSP23390 covers 37% because tissue was
@@ -71,7 +75,7 @@ def _agreement_edges(field, valid, tol):
     )
 
 
-def label_domains(shifts, grid_shape, valid=None, tol=15.0,
+def label_domains(shifts, grid_shape, valid=None, tol=DEFAULT_TOL,
                   min_size=MIN_DOMAIN_BLOCKS):
     """Label blocks by domain; `LOOSE` (-1) where no domain could be trusted.
 

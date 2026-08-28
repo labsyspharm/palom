@@ -28,7 +28,7 @@ from . import (
 # level-quantisation floor -- a block resolved at rung 3 carries its shift in
 # 8px level-0 steps, so two neighbours resolved at different rungs can differ
 # by that much without disagreeing about anything.
-DEFAULT_DOMAIN_TOL = 20.0
+DEFAULT_DOMAIN_TOL = shift_domains.DEFAULT_TOL
 
 
 def transform_bbox(bbox, affine_mx, shape=None):
@@ -792,7 +792,7 @@ class MultiObjAligner:
         # rungs (the setter's job, not a re-assignment).
         mr.coarse_affine_matrix = c21l.coarse_affine_matrix
         mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
-        mr.constrain_shifts()
+        mr.constrain_shifts(domain_tol=domain_tol)
         # the finest rung carries this object's affine; the shifts are the
         # cross-rung pick made by `constrain_shifts`
         affine_matrix, shifts = mr.aligners[0].affine_matrix, mr.shifts
