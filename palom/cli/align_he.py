@@ -10,6 +10,10 @@ from loguru import logger
 import palom
 
 
+class CoarseAlignmentFailed(RuntimeError):
+    """The coarse affine landed nowhere; later stages cannot mean anything."""
+
+
 def align_he(
     p1: str | pathlib.Path,
     p2: str | pathlib.Path,
@@ -30,6 +34,7 @@ def align_he(
     exclude_objects: list | None = None,
     min_num_blocks: int = 25,
     windowed_coarse: bool = True,
+    min_coarse_ncc: float = 0.02,
     only_coarse: bool = False,
     only_qc: bool = False,
     viz_coarse_napari: bool = False,
@@ -121,6 +126,25 @@ def align_he(
     # no sizing here: `plot_util.size_axes_to_image` runs where the figure is
     # drawn, so this one and the per-object coarse plots match
     save_all_figs(out_dir=out_dir / "qc", format="jpg", dpi=144)
+
+    # Fail fast: a coarse affine that landed nowhere makes every later stage
+    # meaningless, and `block_affine` eventually raises on the absurd source
+    # crop it implies (LSP74569c, ~4 min in). This is a floor for the hopeless,
+    # NOT a quality gate -- over the 21 reference slides the committed ncc runs
+    # 0.009-0.60, the only crasher scored 0.0093, and the next lowest (0.0590)
+    # produced one of the best results in the set. Keep the floor well under
+    # that; `register_coarse.min_ncc` (0.10, the route-choice threshold) would
+    # throw good slides away.
+    coarse_ncc = palom.register_coarse.committed_ncc(
+        aligner.ref_thumbnail, aligner.moving_thumbnail, aligner.coarse_affine_matrix
+    )
+    if min_coarse_ncc is not None and coarse_ncc < min_coarse_ncc:
+        raise CoarseAlignmentFailed(
+            f"{p2.name}: coarse alignment scored ncc={coarse_ncc:.4f}, below"
+            f" min_coarse_ncc={min_coarse_ncc}. Check the coarse QC figure in"
+            f" {out_dir / 'qc'}; try --thumbnail_channel1/2, --n_keypoints, or"
+            " --px_size1/2. Pass --min_coarse_ncc=0 to run anyway."
+        )
 
     if viz_coarse_napari:
         _ = viz_coarse(
@@ -328,8 +352,24 @@ def run_batch(csv_path, print_args=True, dryrun=False, **kwargs):
             print()
         return
 
-    for kk in csv_kwargs:
-        func(**{**kwargs, **kk})
+    # One bad row must not cost the rest of the batch -- a pair whose coarse
+    # alignment lands nowhere can raise deep in the warp, and until 2026-08-27
+    # that aborted every remaining row.
+    failures = []
+    for i, kk in enumerate(csv_kwargs):
+        merged = {**kwargs, **kk}
+        try:
+            func(**merged)
+        except Exception as e:
+            name = pathlib.Path(str(merged.get("p2", f"row {i}"))).name
+            failures.append((name, f"{type(e).__name__}: {e}"))
+            logger.opt(exception=True).error(f"FAILED {name}; continuing batch")
+    logger.info(
+        f"Batch finished: {len(csv_kwargs) - len(failures)}/{len(csv_kwargs)} succeeded"
+    )
+    for name, err in failures:
+        logger.error(f"  FAILED {name} -- {err}")
+    return 1 if failures else 0
 
 
 def main():

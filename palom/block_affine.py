@@ -88,6 +88,16 @@ def block_affine(
 
     src_img_block = np.asarray(src_img_block)
 
+    # cv2's remap indexes with int16. A sane affine maps a block-sized
+    # destination to a block-sized source, so hitting this means the affine is
+    # wrong -- it inverse-maps the block across most of the moving image. Raise
+    # that, rather than the bare assertion from inside cv2.
+    if max(src_img_block.shape[:2]) >= 32767:
+        raise ValueError(
+            f"Source crop {src_img_block.shape[:2]} for a {block_shape} block"
+            " exceeds cv2's 32767 limit; the affine is almost certainly wrong"
+        )
+
     # INTER_AREA is not supported
     # https://github.com/opencv/opencv/blob/1ebea1e0f0a4b95515f3e701c5e4243b31f82705/modules/imgproc/src/imgwarp.cpp#L2726-L2756
     # https://medium.com/@wenrudong/what-is-opencvs-inter-area-actually-doing-282a626a09b3

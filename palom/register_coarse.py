@@ -571,6 +571,30 @@ def _close_figs_since(before):
         plt.close(num)
 
 
+def committed_ncc(img_left, img_right, mx):
+    """`score_overlap` of the matrix actually returned, over the whole pair.
+
+    The one number both routes can be compared on, and the one a caller can
+    gate the pair on. The windowed route's own log line reports its winning
+    *tile*'s ncc against that tile only, which is not comparable.
+
+    Measured over the 21 reference slides it spans 0.009-0.60, and it ranks how
+    well a *single global affine* explains the pair -- so it is a floor for the
+    hopeless, not a quality score. The highest scorer in that set (0.60) is a
+    known multi-piece slide.
+    """
+    return register_util.score_overlap(
+        img_left, img_right, np.vstack([np.asarray(mx)[:2], [0, 0, 1]])
+    )
+
+
+def _log_committed(img_left, img_right, mx, route, n_match=None):
+    ncc = committed_ncc(img_left, img_right, mx)
+    matches = "" if n_match is None else f" matches={n_match}"
+    logger.info(f"Committed coarse ({route}): ncc={ncc:.4f}{matches}")
+    return ncc
+
+
 def coarse_register(
     img_left,
     img_right,
@@ -627,9 +651,15 @@ def coarse_register(
             f"matched_area_ratio {matched_area_ratio:.2f} < "
             f"{small_portion_area_ratio}; using windowed route"
         )
-        return windowed_search_then_register(
+        out = windowed_search_then_register(
             img_left, img_right, **win_kwargs, **search_kwargs
         )
+        _log_committed(
+            img_left, img_right,
+            out[0] if isinstance(out, tuple) else out,
+            "windowed/small-portion",
+        )
+        return out
 
     # Plot on the first pass and discard the figure if we end up not taking this
     # route, rather than re-running the match to draw it. The match is the
@@ -647,15 +677,23 @@ def coarse_register(
     )
     ncc = register_util.score_overlap(img_left, img_right, np.vstack([mx, [0, 0, 1]]))
     if n_match >= min_match_count and ncc >= min_ncc:
+        _log_committed(img_left, img_right, mx, "whole-image", n_match)
         return (mx, cfg) if return_config else mx
     _close_figs_since(fignums_before)
     logger.info(
         f"whole-image coarse weak (matches={n_match}, ncc={ncc:.3f}); "
         "falling back to windowed route"
     )
-    return windowed_search_then_register(
+    out = windowed_search_then_register(
         img_left, img_right, **win_kwargs, **search_kwargs
     )
+    # The windowed route reports its winning *tile*'s ncc; score the committed
+    # matrix over the whole pair so both routes report the same quantity and a
+    # caller can gate on it.
+    _log_committed(
+        img_left, img_right, out[0] if isinstance(out, tuple) else out, "windowed"
+    )
+    return out
 
 
 if __name__ == "__main__":
