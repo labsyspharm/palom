@@ -820,6 +820,7 @@ class MultiObjAligner:
                 if magnitudes.size
                 else None,
                 "shift_max": float(magnitudes.max()) if magnitudes.size else None,
+                "levels": mr.level_histogram(in_object),
                 "plot_failed": plot_failed,
             }
         )
@@ -944,6 +945,23 @@ class MultiObjAligner:
             )
         return f"rejected ({stats['reason']})"
 
+    @staticmethod
+    def _format_levels(hist):
+        """Percent of the object's blocks resolved at each level, coarse last.
+
+        A trailing `+N!` is the share no level resolved -- those blocks carry
+        level 0's extrapolation, not a measurement.
+        """
+        if not hist:
+            return "-"
+        total = sum(hist.values())
+        out = "/".join(
+            f"{100 * hist[k] / total:.0f}" for k in sorted(k for k in hist if k >= 0)
+        )
+        if hist.get(-1):
+            out += f" +{100 * hist[-1] / total:.0f}!"
+        return out or "-"
+
     def qc_summary(self, exclude_objects=None):
         """One table saying what each object's alignment actually did.
 
@@ -959,7 +977,8 @@ class MultiObjAligner:
         excluded = set(exclude_objects or [])
         head = (
             f"  {'obj':>3} {'label':>5} {'blocks':>6}  {'affine':<14}"
-            f" {'score':>5}  {'refinement':<30} {'shift med/max':>13}  notes"
+            f" {'score':>5}  {'refinement':<30} {'shift med/max':>13}"
+            f" {'lvl%':>14}  notes"
         )
         lines = [head, "  " + "-" * (len(head) - 2)]
         n_fallback = n_rejected = 0
@@ -988,7 +1007,8 @@ class MultiObjAligner:
             lines.append(
                 f"  {r['object']:>3} {r['label']:>5} {r['n_blocks']:>6} "
                 f" {r['affine']:<14} {score:>5.3f}  {self._format_refine(r['refine']):<30}"
-                f" {shift:>13}  {', '.join(notes)}"
+                f" {shift:>13} {self._format_levels(r.get('levels')):>14}"
+                f"  {', '.join(notes)}"
             )
         tail = [
             f"  {len(qc)} object(s); {n_fallback} fell back to a lower-ranked"
@@ -996,6 +1016,10 @@ class MultiObjAligner:
         ]
         if n_fallback or n_rejected:
             tail.append("  ^ check the per-object QC figures for these")
+        tail.append(
+            "  lvl% = share of blocks resolved per pyramid level, finest first;"
+            " +N! = no level resolved"
+        )
         return "\n".join(lines + tail)
 
     def combine_object_results(self, exclude_objects=None):

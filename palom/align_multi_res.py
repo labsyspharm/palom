@@ -397,6 +397,26 @@ class MultiResAligner:
         self.shifts = out.reshape(2, -1).T
         self.valid_masks = valid_masks
         self.idxs = idxs
+        # Which level supplied each block, -1 where no level was valid: argmax
+        # of an all-False column returns 0, so level 0's extrapolated value is
+        # written but is not a measurement and must not be reported as one.
+        self.result_levels = np.where(
+            np.any(valid_masks, axis=0), np.take(self.levels, mask), -1
+        )
+
+    def level_histogram(self, mask=None):
+        """Block counts keyed by the level that supplied the shift, -1 = none.
+
+        A field mostly filled from coarse levels is a field mostly extrapolated
+        from elsewhere; without this it reads the same as a measured one.
+        """
+        levels = self.result_levels.ravel()
+        if mask is not None:
+            levels = levels[np.asarray(mask).ravel()]
+        return {
+            int(k): int(v)
+            for k, v in zip(*np.unique(levels, return_counts=True))
+        }
 
     def plot_shifts(self, max_radius=None):
         import matplotlib.colors
