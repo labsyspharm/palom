@@ -19,7 +19,16 @@ from . import (
     img_util,
     register_coarse,
     register_util,
+    shift_domains,
 )
+
+# Largest neighbour-to-neighbour shift difference still counted as one domain.
+# Sits in the gap the reference set shows: within a domain neighbours differ by
+# a few px of local deformation, between domains by 50-150px. Kept above the
+# level-quantisation floor -- a block resolved at rung 3 carries its shift in
+# 8px level-0 steps, so two neighbours resolved at different rungs can differ
+# by that much without disagreeing about anything.
+DEFAULT_DOMAIN_TOL = 20.0
 
 
 def transform_bbox(bbox, affine_mx, shape=None):
@@ -94,6 +103,7 @@ class MultiObjAligner:
         min_num_blocks=25,
         windowed_coarse=True,
         coarse_kwargs=None,
+        domain_tol=DEFAULT_DOMAIN_TOL,
         plot=True,
         qc_dir=None,
     ):
@@ -115,6 +125,7 @@ class MultiObjAligner:
             min_num_blocks=min_num_blocks,
             windowed_coarse=windowed_coarse,
             coarse_kwargs=coarse_kwargs,
+            domain_tol=domain_tol,
         )
         # remembered so the warp does not have to be told again -- an object
         # excluded from the block-matrix combine but not from
@@ -653,6 +664,7 @@ class MultiObjAligner:
         windowed_coarse=True,
         coarse_kwargs=None,
         mr=None,
+        domain_tol=DEFAULT_DOMAIN_TOL,
     ):
         rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
         rsm, rem, csm, cem = self.bbox_moving_thumbnail[i]
@@ -820,6 +832,50 @@ class MultiObjAligner:
                 f" p90 {err_stats['p90']:.3f},"
                 f" non-finite {100 * err_stats['frac_inf']:.0f}%"
             )
+
+        # Partition the object's shift field into domains of agreeing shifts.
+        # Reported only -- the warp still treats the object as one piece. A
+        # block is trusted where some rung actually resolved it; `result_levels
+        # == -1` marks the ones carrying rung 0's extrapolation.
+        domain_labels = shift_domains.label_domains(
+            np.asarray(shifts),
+            mr.aligners[0].grid_shape,
+            valid=(np.asarray(mr.result_levels) >= 0) & in_object.reshape(
+                mr.aligners[0].grid_shape
+            ),
+            tol=domain_tol,
+        )
+        domain_stats = shift_domains.summarize(
+            np.asarray(shifts),
+            domain_labels,
+            within=in_object.reshape(mr.aligners[0].grid_shape),
+        )
+        separation = shift_domains.max_separation(np.asarray(shifts), domain_labels)
+        rows = domain_stats["domains"]
+        if len(rows) > 1:
+            logger.info(
+                f"Object {i}: {len(rows)} shift domains, max separation"
+                f" {separation:.1f}px, covering"
+                f" {100 * domain_stats['coverage']:.0f}% of"
+                f" {domain_stats['n_blocks']} blocks (tol={domain_tol}px)"
+            )
+            # A domain under 1% of the object is an island in noise, not a
+            # piece; 23390 produced 19 of them on a field that was 59%
+            # unresolved. Show the substantial ones and count the rest.
+            floor = max(shift_domains.MIN_DOMAIN_BLOCKS,
+                        0.01 * domain_stats["n_blocks"])
+            shown = [r for r in rows if r["blocks"] >= floor][:6]
+            for r in shown:
+                logger.info(
+                    f"    domain {r['domain']}: {r['blocks']:5} blocks,"
+                    f" offset ({r['offset'][0]:+7.1f},{r['offset'][1]:+7.1f}),"
+                    f" spread {r['spread']:.1f}px"
+                )
+            # one tail for everything not shown, whether it fell under the
+            # floor or off the end of the list -- counting the two separately
+            # left domains in neither total
+            if len(rows) > len(shown):
+                logger.info(f"    + {len(rows) - len(shown)} smaller domain(s)")
         self.object_qc.append(
             {
                 "object": i,
@@ -839,6 +895,7 @@ class MultiObjAligner:
                 "shift_max": float(magnitudes.max()) if magnitudes.size else None,
                 "levels": mr.level_histogram(in_object),
                 "pc_error": err_stats,
+                "domains": {**domain_stats, "separation": separation},
                 "plot_failed": plot_failed,
             }
         )
@@ -854,6 +911,7 @@ class MultiObjAligner:
         plot_shift=True,
         refine=True,
         multi_res=True,
+        domain_tol=DEFAULT_DOMAIN_TOL,
         min_num_blocks=25,
         windowed_coarse=True,
         coarse_kwargs=None,
@@ -885,6 +943,7 @@ class MultiObjAligner:
                 # named `refine`/`multi_res`/... bind to `align_object`'s own
                 # parameter and never reach the registration
                 coarse_kwargs=coarse_kwargs,
+                domain_tol=domain_tol,
             )
             object_affines.append(affine)
             object_shifts.append(shifts)
@@ -1014,6 +1073,15 @@ class MultiObjAligner:
                 n_fallback += 1
             if r["refine"] is not None and not r["refine"]["accepted"]:
                 n_rejected += 1
+            dom = r.get("domains") or {}
+            # Surfaced only when the field disagrees with itself by more than
+            # the displacement warp can smooth over: that is the whole reason
+            # to look at the per-object figures.
+            if len(dom.get("domains", ())) > 1 and dom.get("separation", 0) > 0:
+                notes.append(
+                    f"{len(dom['domains'])} domains, max sep"
+                    f" {dom['separation']:.0f}px, {100 * dom['coverage']:.0f}% covered"
+                )
             if r["plot_failed"]:
                 notes.append("shift plot failed")
             if r["object"] in excluded:
