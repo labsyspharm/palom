@@ -80,15 +80,12 @@ class MultiObjAligner:
         )
         self.thumbnail_level1 = thumbnail_level1
         self.thumbnails_pixel_size = thumbnails_pixel_size
-        # per-object QC rows, appended by `align_object`; initialized here so
-        # calling `align_object` on its own is not an AttributeError
-        self.object_qc = []
-        # set by `run`; the warp defaults to it so the two outputs cannot
-        # disagree about which objects are excluded
-        self.exclude_objects = None
+        # QC record, set by `align_tissue`; initialized here so calling
+        # `qc_summary` before it is not an AttributeError
+        self.qc = None
         # set by `run`; None keeps every QC figure open for the caller to do as
         # it likes with (notebooks, `.dev/golden/capture.py`), which is what
-        # calling `align_object` on its own should do
+        # calling `align_tissue` on its own should do
         self.qc_dir = None
         self._qc_count = 0
 
@@ -97,7 +94,6 @@ class MultiObjAligner:
         downscale_factor=8,
         merge_gap=500.0,
         segment=True,
-        exclude_objects=None,
         refine=True,
         multi_res=True,
         min_num_blocks=25,
@@ -118,8 +114,8 @@ class MultiObjAligner:
             segment=segment,
             plot_segmentation=plot,
         )
-        self.align_all_objects(
-            plot_shift=plot,
+        self.align_tissue(
+            plot_shifts=plot,
             refine=refine,
             multi_res=multi_res,
             min_num_blocks=min_num_blocks,
@@ -127,13 +123,7 @@ class MultiObjAligner:
             coarse_kwargs=coarse_kwargs,
             domain_tol=domain_tol,
         )
-        # remembered so the warp does not have to be told again -- an object
-        # excluded from the block-matrix combine but not from
-        # `displacement_transformed_moving_img` is warped by its own affine in
-        # one output and by the baseline in the other
-        self.exclude_objects = exclude_objects
-        self.combine_object_results(exclude_objects=exclude_objects)
-        logger.info("Alignment QC summary\n" + self.qc_summary(exclude_objects))
+        logger.info("Alignment QC summary\n" + self.qc_summary())
 
     def seed_baseline_coarse(self, coarse_affine_matrix, match_config=None):
         """Seed the baseline (whole-image) coarse affine from outside, instead
@@ -141,9 +131,8 @@ class MultiObjAligner:
 
         `coarse_affine_matrix` is in the thumbnail frame (2x3 or 3x3, as
         produced by `register_coarse.coarse_register`). The baseline is used for
-        object bbox transforms, the background fill in
-        `combine_object_results`, and the fallback affine in the multi-object
-        displacement warp.
+        the tissue bbox transform, the background fill in the block-affine
+        grid, and the fallback affine in the displacement warp.
 
         Pass `match_config` (the seeding fit's `Aligner.coarse_match_config`)
         along with it -- a matrix alone carries no record of the configuration it
@@ -151,9 +140,9 @@ class MultiObjAligner:
         """
         self.aligner.coarse_affine_matrix = coarse_affine_matrix
         self.aligner.coarse_match_config = match_config
-        # `bbox_moving_thumbnail` was derived from the previous baseline, and
+        # `tissue_bbox_moving` was derived from the previous baseline, and
         # `match_config` from the previous config
-        self.__dict__.pop("_bbox_moving_thumbnail", None)
+        self.__dict__.pop("_tissue_bbox_moving", None)
         self.__dict__.pop("match_config", None)
 
     @cached_property
@@ -192,8 +181,8 @@ class MultiObjAligner:
         ponytail: only a seeded baseline (`seed_baseline_coarse` without a config)
         still searches. A piece placed mirrored relative to the rest of the slide
         gets the wrong flip either way, its fit comes back near identity, and
-        `_pick_object_affine` drops it back to the baseline affine (the object stays
-        on the baseline, visible in its QC panel and scores). Upgrade when seen in
+        `_pick_affine` drops it back to the baseline affine (visible in the QC
+        panel and scores). Upgrade when seen in
         practice: re-search per object when the pinned-config fit scores weak.
         """
         # reading the baseline runs `Aligner`'s lazy coarse fit if nothing has
@@ -256,33 +245,32 @@ class MultiObjAligner:
         return self.aligner.coarse_affine_matrix
 
     @property
-    def bbox_ref_thumbnail(self):
-        if not hasattr(self, "_bbox_ref_thumbnail"):
+    def tissue_bbox(self):
+        """`(rs, re, cs, ce)` of all tissue, in reference-thumbnail pixels."""
+        if not hasattr(self, "_tissue_bbox"):
             # Deliberately not a lazy `segment_objects()`: it would run with the
             # *default* `merge_gap`/`downscale_factor`, quietly ignoring what the
             # caller meant to segment with, and plot as a side effect.
             raise AttributeError(
-                "no objects segmented yet; call `segment_objects` (or `run`,"
+                "no tissue segmented yet; call `segment_objects` (or `run`,"
                 " which calls it) first"
             )
-        return self._bbox_ref_thumbnail
+        return self._tissue_bbox
 
     @property
-    def bbox_moving_thumbnail(self):
-        """`bbox_ref_thumbnail` mapped through the baseline coarse affine.
+    def tissue_bbox_moving(self):
+        """`tissue_bbox` mapped through the baseline coarse affine.
 
-        Computed for all objects at once and cached: `transform_bbox` transforms
-        the whole list, so calling it per object was quadratic in object count.
-        Invalidated by `segment_objects` (new boxes) and `seed_baseline_coarse`
-        (new affine).
+        Cached, and invalidated by `segment_objects` (new box) and
+        `seed_baseline_coarse` (new affine).
         """
-        if not hasattr(self, "_bbox_moving_thumbnail"):
-            self._bbox_moving_thumbnail = transform_bbox(
-                self.bbox_ref_thumbnail,
+        if not hasattr(self, "_tissue_bbox_moving"):
+            self._tissue_bbox_moving = transform_bbox(
+                [self.tissue_bbox],
                 self.baseline_coarse_affine_matrix,
                 shape=self.moving_thumbnail.shape,
-            )
-        return self._bbox_moving_thumbnail
+            )[0]
+        return self._tissue_bbox_moving
 
     # a typical WSI is ~2 cm across, so the default 500 µm merge gap is ~2.5% of
     # the image width; used as the fallback when the physical scale is unknown
@@ -360,26 +348,25 @@ class MultiObjAligner:
         if min_area is None:
             min_area = 0.01 * area.max() if area.size else 0
         keep = area >= min_area
-        order = np.argsort(area[keep])[::-1]  # largest object first
-        bbox_ref_thumbnail = (
+        # One object. Components that clear `min_area` are merged rather than
+        # ranked and aligned separately: a per-piece rigid offset is the shift
+        # field's job now that it is partitioned into domains, and on the same
+        # physical section the pieces cannot move relative to each other anyway
+        # (`docs/05` P1, `docs/13`). Specks below `min_area` stay out, exactly
+        # as they did when they were labels no object claimed -- the warp gave
+        # them the baseline affine then and gives them the baseline affine now.
+        merged = np.isin(labeled, np.array(regionprops["label"])[keep])
+        rr, cc = np.where(merged)
+        self._tissue_bbox = (
             downscale_factor
-            * np.array(
-                [
-                    regionprops["bbox-0"],
-                    regionprops["bbox-2"],
-                    regionprops["bbox-1"],
-                    regionprops["bbox-3"],
-                ]
-            ).T
+            * np.array([rr.min(), rr.max() + 1, cc.min(), cc.max() + 1])
+            if rr.size
+            else np.zeros(4, dtype=int)
         )
-        self._bbox_ref_thumbnail = bbox_ref_thumbnail[keep][order]
-        # derived from the boxes above; re-segmenting invalidates it
-        self.__dict__.pop("_bbox_moving_thumbnail", None)
-        # label value of each (sorted) object, so per-object masks can be read
-        # back from `segmentation_mask` (which keeps the original label values)
-        self._object_labels = np.array(regionprops["label"])[keep][order]
+        # derived from the box above; re-segmenting invalidates it
+        self.__dict__.pop("_tissue_bbox_moving", None)
         self.segmentation_mask = img_util.repeat_2d(
-            labeled, (downscale_factor, downscale_factor)
+            merged.astype("int32"), (downscale_factor, downscale_factor)
         )[: shape[0], : shape[1]]
         if plot_segmentation:
             # Take the baseline affine first, under its own name. Reading it
@@ -397,20 +384,20 @@ class MultiObjAligner:
             self.plot_segmentation()
             self._finish_new_figs(figs_before, "object segmentation")
 
-    def object_block_mask(self, i, grid_shape=None, threshold=1.0 / 16):
-        """Boolean mask over a block grid for object `i`, from its segmentation
-        label (not its bounding box), so overlapping object bboxes don't collide.
+    def tissue_block_mask(self, grid_shape=None, threshold=1.0 / 16):
+        """Boolean mask over a block grid for the tissue, from the segmentation
+        mask rather than its bounding box, so background inside the box is out.
 
         `grid_shape` defaults to the finest (level1) grid; pass a coarser level's
         `grid_shape` for the multi-res path. Always returns at least one True
-        block (falls back to the object's centroid block when the label fills
-        less than `threshold` of every block), so masked shift computation never
-        produces an all-infinite -- and thus crashing -- level.
+        block (falls back to the centroid block when the tissue fills less than
+        `threshold` of every block), so masked shift computation never produces
+        an all-infinite -- and thus crashing -- level.
         """
         if grid_shape is None:
             grid_shape = self.aligner.grid_shape
         nbi, nbj = grid_shape
-        obj = self.segmentation_mask == self._object_labels[i]
+        obj = self.segmentation_mask > 0
         grid = cv2.resize(
             obj.astype("float32"), (nbj, nbi), interpolation=cv2.INTER_AREA
         )
@@ -426,12 +413,11 @@ class MultiObjAligner:
     def plot_segmentation(self):
         import matplotlib.cm
         import matplotlib.patches
-        import matplotlib.patheffects as pe
         import matplotlib.pyplot as plt
 
         colors = matplotlib.cm.Set3.colors
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-        fig.suptitle("object segmentation")
+        fig.suptitle("tissue segmentation")
 
         def _proc_img(img):
             if img_util.is_brightfield_img(img):
@@ -440,67 +426,44 @@ class MultiObjAligner:
 
         ax1.imshow(_proc_img(self.ref_thumbnail), cmap="gray")
         ax2.imshow(_proc_img(self.moving_thumbnail), cmap="gray")
-        ax1.set_title("reference (object outline + bbox)", fontsize=8)
+        ax1.set_title("reference (tissue outline + bbox)", fontsize=8)
         ax2.set_title(
             "moving (bbox through the baseline coarse affine;\n"
             "dashed = the axis-aligned crop taken from it)",
             fontsize=8,
         )
         tform = skimage.transform.AffineTransform(self.baseline_coarse_affine_matrix)
-        for idx, (label, (rs, re, cs, ce), (rs2, re2, cs2, ce2)) in enumerate(
-            zip(
-                self._object_labels,
-                self.bbox_ref_thumbnail,
-                self.bbox_moving_thumbnail,
+        rs, re, cs, ce = self.tissue_bbox
+        rs2, re2, cs2, ce2 = self.tissue_bbox_moving
+        color = colors[0]
+        # a contour, not `find_boundaries`: a raster outline at thumbnail
+        # resolution aliases into dashes once the figure is rendered small
+        ax1.contour(
+            self.segmentation_mask > 0, levels=[0.5], colors=[color], linewidths=0.8
+        )
+        mpatch = matplotlib.patches.Rectangle(
+            (cs, rs), ce - cs, re - rs, fill=False, edgecolor=color
+        )
+        ax1.add_patch(mpatch)
+        ax2.add_patch(
+            matplotlib.patches.Polygon(
+                tform.inverse(mpatch.get_corners()), fill=False, edgecolor=color
             )
-        ):
-            color = colors[idx % len(colors)]
-            # a contour, not `find_boundaries`: a raster outline at thumbnail
-            # resolution aliases into dashes once the figure is rendered small,
-            # and one shared color cannot say which object a boundary belongs to
-            ax1.contour(
-                self.segmentation_mask == label,
-                levels=[0.5],
-                colors=[color],
-                linewidths=0.8,
+        )
+        # what is actually cropped for the coarse fit: the mapped box is a
+        # parallelogram, the crop is its axis-aligned hull clipped to the image,
+        # and a bad affine shows up as the two disagreeing
+        ax2.add_patch(
+            matplotlib.patches.Rectangle(
+                (cs2, rs2),
+                ce2 - cs2,
+                re2 - rs2,
+                fill=False,
+                edgecolor=color,
+                linestyle="--",
+                linewidth=0.8,
             )
-            mpatch = matplotlib.patches.Rectangle(
-                (cs, rs), ce - cs, re - rs, fill=False, edgecolor=color
-            )
-            ax1.add_patch(mpatch)
-            # bboxes of neighbouring pieces overlap heavily on a diagonal slide,
-            # so label each one with the index the QC summary and the logs use
-            for ax, (x, y) in [(ax1, (cs, rs)), (ax2, (cs2, rs2))]:
-                ax.text(
-                    x,
-                    y,
-                    f" {idx}",
-                    color=color,
-                    va="top",
-                    fontsize=9,
-                    fontweight="bold",
-                    path_effects=[pe.withStroke(linewidth=1.5, foreground="black")],
-                )
-
-            corners = mpatch.get_corners()
-            mpathc2 = matplotlib.patches.Polygon(
-                tform.inverse(corners), fill=False, edgecolor=color
-            )
-            ax2.add_patch(mpathc2)
-            # what is actually cropped for the object's coarse fit: the mapped
-            # box is a parallelogram, the crop is its axis-aligned hull clipped
-            # to the image, and a bad affine shows up as the two disagreeing
-            ax2.add_patch(
-                matplotlib.patches.Rectangle(
-                    (cs2, rs2),
-                    ce2 - cs2,
-                    re2 - rs2,
-                    fill=False,
-                    edgecolor=color,
-                    linestyle="--",
-                    linewidth=0.8,
-                )
-            )
+        )
         for ax, img in [(ax1, self.ref_thumbnail), (ax2, self.moving_thumbnail)]:
             # patches drawn outside the image must not rescale the panel
             ax.set_xlim(0, img.shape[1])
@@ -563,14 +526,14 @@ class MultiObjAligner:
             return best
         return preferred
 
-    def _pick_object_affine(self, i, candidates, ref_crop, moving, to_crop=None):
+    def _pick_affine(self, candidates, ref_crop, moving, to_crop=None):
         """Choose among coarse affine candidates by overlap score.
 
-        `align_object` used to accept its per-object fit unconditionally. That
-        fit is a fresh feature match on masked thumbnails, so it can land well
-        off while the whole-image baseline -- which it is a perturbation of --
-        was fine. One bad object is a hard visible seam, so the fit has to beat
-        the fallback rather than merely exist.
+        This used to accept the masked fit unconditionally. That fit is a fresh
+        feature match on masked thumbnails, so it can land well off while the
+        whole-image baseline -- which it is a perturbation of -- was fine. A bad
+        affine is a hard visible misregistration, so the fit has to beat the
+        fallback rather than merely exist.
 
         The comparison is deliberately blunt: keep the most refined candidate
         unless its score has collapsed (see `FALLBACK_SCORE_RATIO`). The score
@@ -595,12 +558,12 @@ class MultiObjAligner:
         chosen = self._choose_by_score(scores, preferred)
         if chosen != preferred:
             logger.warning(
-                f"Object {i}: '{preferred}' coarse affine scores"
-                f" {scores[preferred]:.3f} against {scores[chosen]:.3f} for"
-                f" '{chosen}'; falling back to '{chosen}'"
+                f"'{preferred}' coarse affine scores {scores[preferred]:.3f}"
+                f" against {scores[chosen]:.3f} for '{chosen}'; falling back"
+                f" to '{chosen}'"
             )
         logger.info(
-            f"Object {i}: coarse affine '{chosen}' ("
+            f"Coarse affine '{chosen}' ("
             + ", ".join(f"{k}={v:.3f}" for k, v in scores.items())
             + ")"
         )
@@ -611,8 +574,7 @@ class MultiObjAligner:
 
         Nothing about it is per-object -- the object enters only through the
         masked thumbnails, the coarse affine and the block mask, all of which
-        `align_object` reassigns on the aligner it is handed. So
-        `align_all_objects` builds one and passes it to every object.
+        `align_tissue` reassigns on the aligner it is handed.
 
         That matters because `MultiResAligner.__init__` persists the ladder,
         which walks the whole moving image once (on the melanoma pair, ~40s to
@@ -644,19 +606,18 @@ class MultiObjAligner:
             # of rungs (the class default of 4 would add coarser ones)
             min_num_blocks=min_num_blocks if multi_res else np.inf,
         )
-        # `block_mask`, `shift_mask` and everything `combine_object_results`
-        # does are on `self.aligner`'s grid; `MultiResAligner` keeps level1
+        # `block_mask` and the block-affine grid are on `self.aligner`'s grid;
+        # `MultiResAligner` keeps level1
         # unconditionally, so its finest rung is the same grid. Pin it -- a
         # mismatch would surface far away, as an IndexError when `block_mask`
-        # indexes `shifts` in `align_object`.
+        # indexes `shifts` in `align_tissue`.
         assert mr.levels[0] == self.level1, (
             f"multi-res finest level {mr.levels[0]} != level1 {self.level1}"
         )
         return mr
 
-    def align_object(
+    def align_tissue(
         self,
-        i,
         plot_shifts=True,
         refine=True,
         multi_res=True,
@@ -666,8 +627,8 @@ class MultiObjAligner:
         mr=None,
         domain_tol=DEFAULT_DOMAIN_TOL,
     ):
-        rs, re, cs, ce = np.array(self.bbox_ref_thumbnail[i]).astype(int)
-        rsm, rem, csm, cem = self.bbox_moving_thumbnail[i]
+        rs, re, cs, ce = np.array(self.tissue_bbox).astype(int)
+        rsm, rem, csm, cem = self.tissue_bbox_moving
 
         masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
         masked_t_ref[rs:re, cs:ce] = self.ref_thumbnail[rs:re, cs:ce]
@@ -679,10 +640,7 @@ class MultiObjAligner:
 
         # Built up front so its finest rung can *be* `c21l`: it is at `level1`
         # with the same thumbnails, so a separate `make_aligner()` only
-        # duplicated it -- and that duplicate cost a full thumbnail build per
-        # object. `align_all_objects` hands the same ladder to every object (see
-        # `make_multi_res_aligner`); building one here keeps this method
-        # callable on its own.
+        # duplicated it -- and that duplicate cost a full thumbnail build.
         if mr is None:
             mr = self.make_multi_res_aligner(
                 multi_res=multi_res, min_num_blocks=min_num_blocks
@@ -706,8 +664,8 @@ class MultiObjAligner:
         # would reject its result anyway. Skip straight to the baseline.
         if rem <= rsm or cem <= csm:
             logger.warning(
-                f"Object {i}: the baseline affine maps its bbox outside the"
-                f" moving thumbnail; keeping the baseline coarse affine"
+                "The baseline affine maps the tissue bbox outside the moving"
+                " thumbnail; keeping the baseline coarse affine"
             )
             c21l.coarse_affine_matrix = self.baseline_coarse_affine_matrix
         else:
@@ -740,8 +698,8 @@ class MultiObjAligner:
                 coarse_kwargs.pop("n_workers", None)
                 # ponytail: an object whose whole-image fit lands nowhere has no
                 # second chance here -- `search_then_register` returns identity and
-                # `_pick_object_affine` drops it to the baseline, so the object is
-                # never better than the whole-slide affine. Observed on LSP74545
+                # `_pick_affine` drops it to the baseline, so it is never
+                # better than the whole-slide affine. Observed on LSP74545
                 # (2026-08-07): every object fit came back at 14 matches / score
                 # 0.000 and fell back. The retry exists one branch up; the reason
                 # it is not the default is cost -- N tiles x 8 configs per object,
@@ -756,12 +714,12 @@ class MultiObjAligner:
                     **coarse_kwargs,
                 )
             c21l.coarse_affine_matrix = _mx
-            self._finish_new_figs(figs_before, f"Object {i} (coarse alignment)")
+            self._finish_new_figs(figs_before, "Coarse alignment")
             candidates.append(("object", c21l.coarse_affine_matrix))
 
-        # per-object block region from the segmentation label (not bbox), so
-        # overlapping object bounding boxes don't cross-assign blocks
-        block_mask = self.object_block_mask(i)
+        # block region from the segmentation mask rather than the bbox, so
+        # background inside the box does not steer the fit
+        block_mask = self.tissue_block_mask()
 
         refine_stats = None
         if refine:
@@ -769,15 +727,12 @@ class MultiObjAligner:
             refined, refine_stats = align_refine.refine_affine_by_block_translation(
                 c21l, block_mask=block_mask, plot=plot_shifts
             )
-            self._finish_new_figs(
-                figs_before, f"Object {i} (coarse affine refinement)"
-            )
+            self._finish_new_figs(figs_before, "Coarse affine refinement")
             if refined is not None:
                 c21l.coarse_affine_matrix = refined
                 candidates.append(("object+refine", c21l.coarse_affine_matrix))
 
-        chosen, scores = self._pick_object_affine(
-            i,
+        chosen, scores = self._pick_affine(
             candidates,
             self.ref_thumbnail[rs:re, cs:ce],
             self.moving_thumbnail,
@@ -791,7 +746,7 @@ class MultiObjAligner:
         # `mr.aligners[0]`, so this fans the chosen affine out to the coarser
         # rungs (the setter's job, not a re-assignment).
         mr.coarse_affine_matrix = c21l.coarse_affine_matrix
-        mr.align(mask_fn=lambda gs: self.object_block_mask(i, gs))
+        mr.align(mask_fn=self.tissue_block_mask)
         mr.constrain_shifts(domain_tol=domain_tol)
         # the finest rung carries this object's affine; the shifts are the
         # cross-rung pick made by `constrain_shifts`
@@ -813,13 +768,13 @@ class MultiObjAligner:
                 shift_plotter.plot_shifts(domain_labels=domain_labels)
             except Exception as e:
                 plot_failed = True
-                logger.warning(f"Failed plotting shifts for object {i}: {e}")
+                logger.warning(f"Failed plotting shifts: {e}")
             finally:
                 # in `finally` so a call that raised partway still hands over
                 # what it drew: with nothing sweeping the open figures at the
                 # end of the run any more, a figure left behind here is one
                 # nothing will ever write or close
-                self._finish_new_figs(figs_before, f"Object {i} (block shifts)")
+                self._finish_new_figs(figs_before, "Block shifts")
 
         magnitudes = np.linalg.norm(np.asarray(shifts)[in_object], axis=1)
         # Phase-correlation confidence of the blocks this object actually uses.
@@ -835,7 +790,7 @@ class MultiObjAligner:
         }
         if finite.size:
             logger.info(
-                f"Object {i} block PC error: median {err_stats['median']:.3f},"
+                f"Block PC error: median {err_stats['median']:.3f},"
                 f" p90 {err_stats['p90']:.3f},"
                 f" non-finite {100 * err_stats['frac_inf']:.0f}%"
             )
@@ -853,7 +808,7 @@ class MultiObjAligner:
         rows = domain_stats["domains"]
         if len(rows) > 1:
             logger.info(
-                f"Object {i}: {len(rows)} shift domains, max separation"
+                f"{len(rows)} shift domains, max separation"
                 f" {separation:.1f}px, covering"
                 f" {100 * domain_stats['coverage']:.0f}% of"
                 f" {domain_stats['n_blocks']} blocks (tol={domain_tol}px)"
@@ -875,16 +830,14 @@ class MultiObjAligner:
             # left domains in neither total
             if len(rows) > len(shown):
                 logger.info(f"    + {len(rows) - len(shown)} smaller domain(s)")
-        self.object_qc.append(
+        self.qc = (
             {
-                "object": i,
-                "label": int(self._object_labels[i]),
                 "n_blocks": int(in_object.sum()),
                 "affine": chosen,
-                # what the object would have used absent a score collapse; recorded
-                # rather than re-derived, since the candidate list is not fixed (an
-                # object whose bbox lands off the moving image never gets an
-                # "object" candidate at all)
+                # what would have been used absent a score collapse; recorded
+                # rather than re-derived, since the candidate list is not fixed
+                # (a bbox landing off the moving image never gets an "object"
+                # candidate at all)
                 "preferred": candidates[-1][0],
                 "scores": scores,
                 "refine": refine_stats,
@@ -898,62 +851,19 @@ class MultiObjAligner:
                 "plot_failed": plot_failed,
             }
         )
-        return (
-            affine_matrix,
-            shifts,
-            align.block_affine_matrices(affine_matrix, shifts),
-            shift_mask,
+        self.tissue_affine = np.asarray(affine_matrix)
+        self.tissue_shifts = np.asarray(shifts)
+        self.tissue_shift_mask = shift_mask
+        # block matrices: the tissue's own affine+shift where it owns the block,
+        # the baseline affine everywhere else. This used to be an argmax over
+        # per-object masks (`combine_object_results`); with one object it is a
+        # plain two-way choice.
+        mxs = align.block_affine_matrices(affine_matrix, shifts)
+        in_grid = np.asarray(block_mask).ravel()
+        mxs[~in_grid] = self.baseline_affine_matrix
+        self.block_affine_matrices_da = align.block_affine_matrices_da(
+            mxs, self.aligner.grid_shape
         )
-
-    def align_all_objects(
-        self,
-        plot_shift=True,
-        refine=True,
-        multi_res=True,
-        domain_tol=DEFAULT_DOMAIN_TOL,
-        min_num_blocks=25,
-        windowed_coarse=True,
-        coarse_kwargs=None,
-    ):
-        # `coarse_kwargs` reaches each object's coarse call -- notably
-        # `n_workers`, which parallelizes the windowed retry's tile search and
-        # otherwise never leaves the whole-slide baseline call
-        block_mxs = []
-        shift_masks = []
-        object_affines = []
-        object_shifts = []
-        self.object_qc = []
-        # one ladder for the whole slide, not one per piece -- building it
-        # persists a coarsened copy of the moving image, which is the most
-        # expensive step in the run
-        mr = self.make_multi_res_aligner(
-            multi_res=multi_res, min_num_blocks=min_num_blocks
-        )
-        for idx, _ in enumerate(self.bbox_ref_thumbnail):
-            affine, shifts, mx, mask = self.align_object(
-                idx,
-                mr=mr,
-                plot_shifts=plot_shift,
-                refine=refine,
-                multi_res=multi_res,
-                min_num_blocks=min_num_blocks,
-                windowed_coarse=windowed_coarse,
-                # passed as a dict, not splatted: splatting let a coarse kwarg
-                # named `refine`/`multi_res`/... bind to `align_object`'s own
-                # parameter and never reach the registration
-                coarse_kwargs=coarse_kwargs,
-                domain_tol=domain_tol,
-            )
-            object_affines.append(affine)
-            object_shifts.append(shifts)
-            block_mxs.append(mx)
-            shift_masks.append(mask)
-        self.block_mxs = np.array(block_mxs)
-        self.shift_masks = np.array(shift_masks)
-        # per-object (global affine, per-block shift field) kept separately so
-        # the displacement-field warp can build one continuous field per object
-        self.object_affines = np.array(object_affines)
-        self.object_shifts = np.array(object_shifts)
 
     @staticmethod
     def _fignums():
@@ -1038,106 +948,68 @@ class MultiObjAligner:
             out += f" +{100 * hist[-1] / total:.0f}!"
         return out or "-"
 
-    def qc_summary(self, exclude_objects=None):
-        """One table saying what each object's alignment actually did.
+    def qc_summary(self):
+        """One line saying what the alignment actually did.
 
         Every decision here is already logged, but as single lines among
-        thousands: a rejected refinement, a per-object coarse that lost to the
+        thousands: a rejected refinement, a coarse fit that lost to the
         baseline, a shift plot that raised. Those are exactly the outcomes worth
         seeing, and a run that ends without a verdict is not hands-off, only
         quiet.
         """
-        qc = getattr(self, "object_qc", None)
-        if not qc:
-            return "  (no objects aligned)"
-        excluded = set(exclude_objects or [])
+        r = getattr(self, "qc", None)
+        if not r:
+            return "  (nothing aligned)"
         head = (
-            f"  {'obj':>3} {'label':>5} {'blocks':>6}  {'affine':<14}"
-            f" {'score':>5}  {'refinement':<30} {'shift med/max':>13}"
-            f" {'lvl%':>14}  notes"
+            f"  {'blocks':>6}  {'affine':<14} {'score':>5}  {'refinement':<30}"
+            f" {'shift med/max':>13} {'lvl%':>14}  notes"
         )
-        lines = [head, "  " + "-" * (len(head) - 2)]
-        n_fallback = n_rejected = n_low_coverage = 0
-        for r in qc:
-            # `align_object` records what it actually preferred; fall back to
-            # the candidate order for rows built by hand (the self-checks)
-            preferred = r.get("preferred") or next(
-                name
-                for name in ("object+refine", "object", "baseline")
-                if name in r["scores"]
+        # what was actually preferred; fall back to the candidate order for
+        # rows built by hand (the self-checks)
+        preferred = r.get("preferred") or next(
+            name
+            for name in ("object+refine", "object", "baseline")
+            if name in r["scores"]
+        )
+        notes = []
+        if r["affine"] != preferred:
+            notes.append(f"FELL BACK to {r['affine']}")
+        dom = r.get("domains") or {}
+        # Surfaced only when the field disagrees with itself by more than the
+        # displacement warp can smooth over: that is the whole reason to look at
+        # the QC figures.
+        if len(dom.get("domains", ())) > 1 and dom.get("separation", 0) > 0:
+            notes.append(
+                f"{len(dom['domains'])} domains, max sep"
+                f" {dom['separation']:.0f}px, {100 * dom['coverage']:.0f}% covered"
             )
-            notes = []
-            if r["affine"] != preferred:
-                notes.append(f"FELL BACK to {r['affine']}")
-                n_fallback += 1
-            if r["refine"] is not None and not r["refine"]["accepted"]:
-                n_rejected += 1
-            dom = r.get("domains") or {}
-            # Surfaced only when the field disagrees with itself by more than
-            # the displacement warp can smooth over: that is the whole reason
-            # to look at the per-object figures.
-            if len(dom.get("domains", ())) > 1 and dom.get("separation", 0) > 0:
-                notes.append(
-                    f"{len(dom['domains'])} domains, max sep"
-                    f" {dom['separation']:.0f}px, {100 * dom['coverage']:.0f}% covered"
-                )
-            # Flagged, not fatal: low coverage has legitimate causes -- tissue
-            # genuinely lost between the two scans reads exactly like this --
-            # so the run proceeds and the slide goes on the review list.
-            if 0 < dom.get("coverage", 1.0) < shift_domains.LOW_COVERAGE:
-                notes.append("REVIEW: shift field mostly unresolved")
-                n_low_coverage += 1
-            if r["plot_failed"]:
-                notes.append("shift plot failed")
-            if r["object"] in excluded:
-                notes.append("EXCLUDED from output")
-            shift = "-"
-            if r["shift_median"] is not None:
-                shift = f"{r['shift_median']:.1f} / {r['shift_max']:.1f}"
-            score = r["scores"].get(r["affine"], float("nan"))
-            lines.append(
-                f"  {r['object']:>3} {r['label']:>5} {r['n_blocks']:>6} "
-                f" {r['affine']:<14} {score:>5.3f}  {self._format_refine(r['refine']):<30}"
-                f" {shift:>13} {self._format_levels(r.get('levels')):>14}"
-                f"  {', '.join(notes)}"
-            )
-        tail = [
-            f"  {len(qc)} object(s); {n_fallback} fell back to a lower-ranked"
-            f" affine, {n_rejected} refinement(s) rejected"
-            + (f", {n_low_coverage} for review" if n_low_coverage else "")
+        # Flagged, not fatal: low coverage has legitimate causes -- tissue
+        # genuinely lost between the two scans reads exactly like this -- so the
+        # run proceeds and the slide goes on the review list.
+        low_coverage = 0 < dom.get("coverage", 1.0) < shift_domains.LOW_COVERAGE
+        if low_coverage:
+            notes.append("REVIEW: shift field mostly unresolved")
+        if r["plot_failed"]:
+            notes.append("shift plot failed")
+        shift = "-"
+        if r["shift_median"] is not None:
+            shift = f"{r['shift_median']:.1f} / {r['shift_max']:.1f}"
+        score = r["scores"].get(r["affine"], float("nan"))
+        rejected = r["refine"] is not None and not r["refine"]["accepted"]
+        lines = [
+            head,
+            "  " + "-" * (len(head) - 2),
+            f"  {r['n_blocks']:>6}  {r['affine']:<14} {score:>5.3f} "
+            f" {self._format_refine(r['refine']):<30} {shift:>13}"
+            f" {self._format_levels(r.get('levels')):>14}  {', '.join(notes)}",
         ]
-        if n_fallback or n_rejected or n_low_coverage:
-            tail.append("  ^ check the per-object QC figures for these")
-        tail.append(
+        if r["affine"] != preferred or rejected or low_coverage:
+            lines.append("  ^ check the QC figures")
+        lines.append(
             "  lvl% = share of blocks resolved per pyramid level, finest first;"
             " +N! = no level resolved"
         )
-        return "\n".join(lines + tail)
-
-    def combine_object_results(self, exclude_objects=None):
-        to_include = np.ones(len(self.shift_masks), dtype=bool)
-        if exclude_objects is not None:
-            for ii in exclude_objects:
-                to_include[ii] = False
-        if not to_include.any():
-            raise ValueError(
-                f"`exclude_objects={sorted(exclude_objects)}` excludes all"
-                f" {len(self.shift_masks)} aligned object(s); at least one must"
-                f" remain"
-            )
-        masks = self.shift_masks[to_include]
-        mxs = self.block_mxs[to_include]
-        passed = np.argmax(masks.reshape(len(masks), -1), axis=0)
-        mxs_final = np.zeros_like(mxs[0])
-        for idx, bb in enumerate(mxs):
-            mm = passed == idx
-            mxs_final[mm] = bb[mm]
-        mxs_final[~masks.reshape(len(masks), -1).max(axis=0)] = (
-            self.baseline_affine_matrix
-        )
-        self.block_affine_matrices_da = align.block_affine_matrices_da(
-            mxs_final, self.aligner.grid_shape
-        )
+        return "\n".join(lines)
 
     def displacement_transformed_moving_img(
         self,
@@ -1146,32 +1018,25 @@ class MultiObjAligner:
         field_order=1,
         is_mask=False,
         cval=0.0,
-        exclude_objects=None,
         interpolation="skimage",
     ):
-        """Seam-free, mask-constrained multi-object warp.
+        """Seam-free, mask-constrained warp.
 
-        Each object is warped by its own affine plus a continuous displacement
-        field (its per-block shifts interpolated and smoothed *within the
-        object's mask* via normalized convolution, so the smoothing never
-        bleeds across the object boundary). The labeled `segmentation_mask`
-        assigns every output pixel to exactly one object at full resolution, so
-        intra-object block cracks disappear while genuine inter-object
-        discontinuities are preserved. Background (and excluded objects) fall
-        back to the baseline affine.
+        The tissue is warped by its affine plus one continuous displacement
+        field -- its per-block shifts interpolated and smoothed *within the
+        tissue mask* via normalized convolution, so the smoothing never bleeds
+        across the boundary. `segmentation_mask` says which output pixels are
+        tissue at full resolution; background falls back to the baseline affine.
 
-        `sigma_blocks` controls how gradually each object's displacement blends
-        between its blocks (in block units); see
+        A per-piece rigid offset is carried inside this one field as a ramp over
+        roughly one block, rather than by compositing separate per-piece fields
+        (`docs/07`, 2026-08-28 note; strain measured in `docs/12`).
+
+        `sigma_blocks` controls how gradually the displacement blends between
+        blocks (in block units); see
         `align.block_displacement_transformed_moving_img`.
-
-        `exclude_objects` defaults to whatever `run` was given, so the warp and
-        `block_affine_matrices_da` cannot disagree about which objects are in.
-        Pass a value only to override that for one call.
         """
         import scipy.ndimage as ndi
-
-        if exclude_objects is None:
-            exclude_objects = self.exclude_objects
 
         c21l = self.aligner
         ref_img = c21l.ref_img
@@ -1181,65 +1046,54 @@ class MultiObjAligner:
         # output (level1) pixels per labeled-mask (ref-thumbnail) pixel
         mask_scale = float(c21l.ref_thumbnail_down_factor)
 
-        exclude = set(exclude_objects or [])
         base_inv_affine = np.linalg.inv(
             np.asarray(self.baseline_affine_matrix, dtype="float64")
         )
+        a_inv = np.linalg.inv(np.asarray(self.tissue_affine, dtype="float64"))
+        # displacement = -shift (see block_affine_matrices convention)
+        d = -np.asarray(self.tissue_shifts, dtype="float32").reshape(*grid_shape, 2)
 
-        label_to_obj = {}
-        for i, label in enumerate(self._object_labels):
-            if i in exclude:
-                continue
-            a_inv = np.linalg.inv(np.asarray(self.object_affines[i], dtype="float64"))
-            # displacement = -shift (see block_affine_matrices convention)
-            d = -np.asarray(self.object_shifts[i], dtype="float32").reshape(
-                *grid_shape, 2
+        # Outside-tissue blocks never held a measurement: `_pc` returns inf
+        # there, and `constrain_block_shifts` either extrapolates them from the
+        # tissue's trend or -- on one of its degenerate early returns -- leaves
+        # the inf for `MultiResAligner.constrain_shifts` to normalize to 0. That
+        # 0 is indistinguishable from a measured "no displacement here", and
+        # `_sample_displacement` samples one cell *outside* the tissue when it
+        # bilinearly interpolates the rim, so it would pull the rim toward zero.
+        #
+        # Fill those cells from the nearest in-tissue block instead. The rim
+        # then interpolates against a continuation of the field, and no value
+        # that merely means "not measured" survives to be read as data.
+        # In-tissue cells map to themselves, so this is an identity there.
+        #
+        # Note this cannot be folded into the normalized convolution below: at
+        # the default `sigma_blocks=0` a gaussian filter is an identity, so that
+        # branch would leave `d` exactly as it found it.
+        in_tissue = self.tissue_block_mask(grid_shape)
+        if in_tissue.any():
+            _, (fill_r, fill_c) = ndi.distance_transform_edt(
+                ~in_tissue, return_indices=True
             )
-            # Outside-object blocks never held a measurement: `_pc` returns inf
-            # there, and `constrain_block_shifts` either extrapolates them from
-            # the object's trend or -- on one of its degenerate early returns --
-            # leaves the inf for `MultiResAligner.constrain_shifts` to normalize
-            # to 0. That 0 is indistinguishable from a measured "no displacement
-            # here", and `_sample_displacement` samples one cell *outside* the
-            # object when it bilinearly interpolates the rim, so it would pull
-            # the rim toward zero.
-            #
-            # Fill those cells from the nearest in-object block instead. The rim
-            # then interpolates against a continuation of the object's own
-            # field, and no value that merely means "not measured" survives to
-            # be read as data. In-object cells map to themselves, so this is an
-            # identity there.
-            #
-            # Note this cannot be folded into the normalized convolution below:
-            # at the default `sigma_blocks=0` a gaussian filter is an identity,
-            # so that branch would leave `d` exactly as it found it.
-            in_object = self.object_block_mask(i, grid_shape)
-            if in_object.any():
-                _, (fill_r, fill_c) = ndi.distance_transform_edt(
-                    ~in_object, return_indices=True
-                )
-                d = d[fill_r, fill_c]
-            if sigma_blocks and sigma_blocks > 0:
-                # normalized convolution: smooth only over the object's own
-                # blocks so the field isn't pulled toward neighbours/background
-                weight = in_object.astype("float32")
-                num = ndi.gaussian_filter(
-                    d * weight[..., None],
-                    sigma=(sigma_blocks, sigma_blocks, 0),
-                    mode="constant",
-                )
-                den = ndi.gaussian_filter(
-                    weight, sigma=(sigma_blocks, sigma_blocks), mode="constant"
-                )
-                valid = den > 1e-3
-                d = np.where(
-                    valid[..., None], num / np.maximum(den[..., None], 1e-6), d
-                )
-            label_to_obj[int(label)] = (a_inv, np.ascontiguousarray(d))
+            d = d[fill_r, fill_c]
+        if sigma_blocks and sigma_blocks > 0:
+            # normalized convolution: smooth only over the tissue's own blocks
+            # so the field isn't pulled toward the background
+            weight = in_tissue.astype("float32")
+            num = ndi.gaussian_filter(
+                d * weight[..., None],
+                sigma=(sigma_blocks, sigma_blocks, 0),
+                mode="constant",
+            )
+            den = ndi.gaussian_filter(
+                weight, sigma=(sigma_blocks, sigma_blocks), mode="constant"
+            )
+            valid = den > 1e-3
+            d = np.where(valid[..., None], num / np.maximum(den[..., None], 1e-6), d)
+        d = np.ascontiguousarray(d)
 
         field_interp = cv2.INTER_LINEAR if field_order == 1 else cv2.INTER_CUBIC
         order = 0 if is_mask else 1
-        label_mask = np.ascontiguousarray(self.segmentation_mask)
+        tissue_mask = np.ascontiguousarray(self.segmentation_mask > 0)
 
         return_slice = slice(None)
         mimg = moving_img
@@ -1250,11 +1104,12 @@ class MultiObjAligner:
         template = da.zeros(out_shape, dtype="uint8", chunks=(cy, cx))
         warped = [
             template.map_blocks(
-                align._multiobj_displacement_block,
+                align._displacement_block,
                 src_array=c,
-                label_to_obj=label_to_obj,
+                inv_affine=a_inv,
+                grid=d,
                 base_inv_affine=base_inv_affine,
-                label_mask=label_mask,
+                tissue_mask=tissue_mask,
                 mask_scale=mask_scale,
                 out_shape=out_shape,
                 cval=float(cval),

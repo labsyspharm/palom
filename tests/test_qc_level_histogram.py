@@ -100,14 +100,12 @@ def test_format_levels(hist, expected):
 
 def test_summary_row_carries_the_histogram():
     mo = MultiObjAligner.__new__(MultiObjAligner)
-    mo.object_qc = [
-        {
-            "object": 0, "label": 1, "n_blocks": 10, "affine": "object+refine",
-            "preferred": "object+refine", "scores": {"object+refine": 0.31},
-            "refine": None, "shift_median": 1.2, "shift_max": 9.0,
-            "levels": {0: 8, 1: 1, -1: 1}, "plot_failed": False,
-        }
-    ]
+    mo.qc = {
+        "n_blocks": 10, "affine": "object+refine",
+        "preferred": "object+refine", "scores": {"object+refine": 0.31},
+        "refine": None, "shift_median": 1.2, "shift_max": 9.0,
+        "levels": {0: 8, 1: 1, -1: 1}, "plot_failed": False,
+    }
     out = mo.qc_summary()
     assert "lvl%" in out
     assert "80/10 +10!" in out

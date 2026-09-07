@@ -29,9 +29,8 @@ def align_he(
     coarse_n_workers: int = 1,
     thumbnail_pixel_size: float | None = None,
     shift_block_size: int | None = None,
-    multi_obj: bool = True,
+    expand_mask: bool = True,
     merge_gap: float = 500.0,
-    exclude_objects: list | None = None,
     min_num_blocks: int = 25,
     windowed_coarse: bool = True,
     min_coarse_ncc: float = 0.02,
@@ -153,11 +152,15 @@ def align_he(
         )
 
     if not only_coarse:
-        # Single alignment path: the multi-object orchestrator, always
-        # multi-res. `multi_obj` toggles segmentation -- True (default) splits
-        # the scan into tissue pieces and aligns each independently; False
-        # treats the whole scan as one global object (the classic
-        # single-object, multi-res alignment == N=1).
+        # One tissue object, always multi-res. A per-piece rigid offset is
+        # carried by the shift field, partitioned into domains, rather than by
+        # aligning pieces separately (`docs/13`).
+        #
+        # `expand_mask` chooses how the tissue mask is built: True (default)
+        # closes gaps up to `merge_gap` and dilates by ~640 um before taking
+        # it, False uses the raw entropy mask. It was `multi_obj`, whose name
+        # described the loop that is gone rather than the mask it actually
+        # selected. Default preserved so existing callers get the same mask.
         mo_aligner = palom.align_multi_obj.MultiObjAligner(
             r1,
             r2,
@@ -175,9 +178,8 @@ def align_he(
             aligner.coarse_affine_matrix, aligner.coarse_match_config
         )
         mo_aligner.run(
-            segment=multi_obj,
+            segment=expand_mask,
             merge_gap=merge_gap,
-            exclude_objects=exclude_objects,
             min_num_blocks=min_num_blocks,
             windowed_coarse=windowed_coarse,
             # the same coarse budget/workers the baseline fit above used, so
@@ -199,14 +201,11 @@ def align_he(
             mx, level2 = block_mx, mo_aligner.level2
 
         if displacement_warp and not only_coarse:
-            # seam-free, mask-constrained warp: each object gets its own
-            # continuous displacement field (a single object in the
-            # non-segmented case), composited per pixel by the labeled
-            # segmentation mask.
+            # seam-free, mask-constrained warp: one continuous displacement
+            # field over the tissue, baseline affine outside it
             mosaic = mo_aligner.displacement_transformed_moving_img(
                 r2.pyramid[level2],
                 sigma_blocks=smooth_shifts_sigma,
-                exclude_objects=exclude_objects,
                 interpolation=warp_interpolation,
             )
         else:

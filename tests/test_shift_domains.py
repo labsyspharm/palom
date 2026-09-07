@@ -219,19 +219,19 @@ def test_qc_note_appears_only_when_domains_disagree():
 
     def row(**dom):
         return dict(
-            object=0, label=1, n_blocks=100, affine="object", preferred="object",
+            n_blocks=100, affine="object", preferred="object",
             scores={"object": 0.4}, refine=None, shift_median=1.0, shift_max=2.0,
             levels={0: 100}, plot_failed=False, domains=dom,
         )
 
     mo = MultiObjAligner.__new__(MultiObjAligner)
-    mo.object_qc = [row(domains=[1, 2, 3], separation=100.2, coverage=0.93)]
+    mo.qc = row(domains=[1, 2, 3], separation=100.2, coverage=0.93)
     assert "3 domains, max sep 100px, 93% covered" in mo.qc_summary()
 
     # one domain, or domains that agree, is not worth a note
-    mo.object_qc = [row(domains=[1], separation=0.0, coverage=1.0)]
+    mo.qc = row(domains=[1], separation=0.0, coverage=1.0)
     assert "domains, max sep" not in mo.qc_summary()
-    mo.object_qc = [row(domains=[1, 2], separation=0.0, coverage=1.0)]
+    mo.qc = row(domains=[1, 2], separation=0.0, coverage=1.0)
     assert "domains, max sep" not in mo.qc_summary()
 
 
@@ -240,11 +240,11 @@ def test_qc_summary_survives_rows_without_domain_info():
     from palom.align_multi_obj import MultiObjAligner
 
     mo = MultiObjAligner.__new__(MultiObjAligner)
-    mo.object_qc = [dict(
-        object=0, label=1, n_blocks=10, affine="baseline", preferred="baseline",
+    mo.qc = dict(
+        n_blocks=10, affine="baseline", preferred="baseline",
         scores={"baseline": 0.3}, refine=None, shift_median=1.0, shift_max=2.0,
         levels={0: 10}, plot_failed=False,
-    )]
+    )
     assert "baseline" in mo.qc_summary()
 
 
@@ -254,19 +254,20 @@ def test_low_coverage_is_flagged_for_review_not_failed():
 
     def row(cov, dom):
         return dict(
-            object=0, label=1, n_blocks=300, affine="object", preferred="object",
+            n_blocks=300, affine="object", preferred="object",
             scores={"object": 0.3}, refine=None, shift_median=5.0, shift_max=50.0,
             levels={0: 300}, plot_failed=False,
             domains=dict(domains=dom, separation=99.0, coverage=cov),
         )
 
     mo = MultiObjAligner.__new__(MultiObjAligner)
-    mo.object_qc = [row(0.37, list(range(19)))]
+    mo.qc = row(0.37, list(range(19)))
     out = mo.qc_summary()
     assert "REVIEW: shift field mostly unresolved" in out
-    assert "1 for review" in out
+    # and it points at the figures rather than just noting it in passing
+    assert "check the QC figures" in out
 
-    mo.object_qc = [row(0.93, [1, 2, 3])]
+    mo.qc = row(0.93, [1, 2, 3])
     assert "REVIEW" not in mo.qc_summary()
 
 
@@ -275,10 +276,10 @@ def test_coverage_of_zero_is_not_flagged_twice():
     from palom.align_multi_obj import MultiObjAligner
 
     mo = MultiObjAligner.__new__(MultiObjAligner)
-    mo.object_qc = [dict(
-        object=0, label=1, n_blocks=5, affine="baseline", preferred="baseline",
+    mo.qc = dict(
+        n_blocks=5, affine="baseline", preferred="baseline",
         scores={"baseline": 0.3}, refine=None, shift_median=1.0, shift_max=2.0,
         levels={0: 5}, plot_failed=False,
         domains=dict(domains=[], separation=0.0, coverage=0.0),
-    )]
+    )
     assert "REVIEW" not in mo.qc_summary()
