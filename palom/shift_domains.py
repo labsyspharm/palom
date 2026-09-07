@@ -3,9 +3,12 @@
 The problem this solves: on a slide carrying several tissue pieces, each piece
 sits at its own rigid offset -- 50-150 px measured across the reference set --
 because ashlar places every non-primary connected component by centroid-matching
-a model extrapolated from raw stage coordinates, translation only, and because
-pieces are floated and mounted independently between sections. A stitching error
-does the same thing *inside* one piece, at tile boundaries.
+a model extrapolated from raw stage coordinates, translation only. A stitching
+error does the same thing *inside* one piece, at tile boundaries.
+
+The two images are the *same physical section*, so the pieces cannot have moved
+relative to each other: every per-piece offset is a stitching artifact, and is
+therefore translation-only by construction rather than by measurement.
 
 Neither is representable by one affine plus a C0 displacement field, and
 `align.constrain_block_shifts` actively regresses the second domain away: it
