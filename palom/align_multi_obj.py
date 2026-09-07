@@ -32,24 +32,22 @@ DEFAULT_DOMAIN_TOL = shift_domains.DEFAULT_TOL
 
 
 def transform_bbox(bbox, affine_mx, shape=None):
-    """Map reference-frame bboxes through `affine_mx` into the moving frame.
+    """Map one reference-frame bbox through `affine_mx` into the moving frame.
 
     `shape` clips the result to the moving image's bounds. Without it a bad
     affine can hand back a box that lies entirely outside the image, whose slice
     is empty -- which silently turns the masked thumbnail into a constant, and
     the object's coarse fit into a registration against a blank image.
     """
-    tform_bbox = []
+    rs, re, cs, ce = bbox
     tform = skimage.transform.AffineTransform(affine_mx)
     hi = (None, None) if shape is None else (shape[0], shape[1])
-    for rs, re, cs, ce in bbox:
-        xx, yy = tform.inverse(list(itertools.product([cs, ce], [rs, re]))).T
-        rs2, cs2 = np.floor([yy.min(), xx.min()]).astype(int)
-        re2, ce2 = np.ceil([yy.max(), xx.max()]).astype(int)
-        rs2, re2 = np.clip([rs2, re2], 0, hi[0])
-        cs2, ce2 = np.clip([cs2, ce2], 0, hi[1])
-        tform_bbox.append([rs2, re2, cs2, ce2])
-    return tform_bbox
+    xx, yy = tform.inverse(list(itertools.product([cs, ce], [rs, re]))).T
+    rs2, cs2 = np.floor([yy.min(), xx.min()]).astype(int)
+    re2, ce2 = np.ceil([yy.max(), xx.max()]).astype(int)
+    rs2, re2 = np.clip([rs2, re2], 0, hi[0])
+    cs2, ce2 = np.clip([cs2, ce2], 0, hi[1])
+    return [rs2, re2, cs2, ce2]
 
 
 class MultiObjAligner:
@@ -95,7 +93,6 @@ class MultiObjAligner:
         merge_gap=500.0,
         segment=True,
         refine=True,
-        multi_res=True,
         min_num_blocks=25,
         windowed_coarse=True,
         coarse_kwargs=None,
@@ -117,7 +114,6 @@ class MultiObjAligner:
         self.align_tissue(
             plot_shifts=plot,
             refine=refine,
-            multi_res=multi_res,
             min_num_blocks=min_num_blocks,
             windowed_coarse=windowed_coarse,
             coarse_kwargs=coarse_kwargs,
@@ -266,10 +262,10 @@ class MultiObjAligner:
         """
         if not hasattr(self, "_tissue_bbox_moving"):
             self._tissue_bbox_moving = transform_bbox(
-                [self.tissue_bbox],
+                self.tissue_bbox,
                 self.baseline_coarse_affine_matrix,
                 shape=self.moving_thumbnail.shape,
-            )[0]
+            )
         return self._tissue_bbox_moving
 
     # a typical WSI is ~2 cm across, so the default 500 µm merge gap is ~2.5% of
@@ -569,7 +565,7 @@ class MultiObjAligner:
         )
         return chosen, scores
 
-    def make_multi_res_aligner(self, multi_res=True, min_num_blocks=25):
+    def make_multi_res_aligner(self, min_num_blocks=25):
         """The resolution ladder every object's block shifts are measured on.
 
         Nothing about it is per-object -- the object enters only through the
@@ -581,11 +577,10 @@ class MultiObjAligner:
         decode a 10.8 GB level-0 SVS). Per object, that is the single most
         expensive thing in a multi-piece run.
 
-        `multi_res=False` is this same aligner truncated to its base rung rather
-        than a separate code path: `MultiResAligner`'s base rung is the very
-        `get_aligner` call `make_aligner()` makes, argument for argument, and an
-        unreachable `min_num_blocks` stops the ladder there. Routing it through
-        here also gets it `MultiResAligner.constrain_shifts`, which normalizes
+        Its base rung is the very `get_aligner` call `make_aligner()` makes,
+        argument for argument; an unreachable `min_num_blocks` stops the ladder
+        there for a single-rung run. Routing through here also gets
+        `MultiResAligner.constrain_shifts`, which normalizes
         non-finite residuals to 0 -- `Aligner.constrain_shifts` alone leaves
         `inf` at outside-object blocks whenever `constrain_block_shifts` takes
         one of its degenerate early returns, and that `inf` reaches
@@ -602,9 +597,8 @@ class MultiObjAligner:
             thumbnail_channel2=self.thumbnail_channel2,
             thumbnail_level1=self.thumbnail_level1,
             thumbnails_pixel_size=self.thumbnails_pixel_size,
-            # match the standalone `multi_res` path so both use the same number
-            # of rungs (the class default of 4 would add coarser ones)
-            min_num_blocks=min_num_blocks if multi_res else np.inf,
+            # the class default of 4 would add coarser rungs
+            min_num_blocks=min_num_blocks,
         )
         # `block_mask` and the block-affine grid are on `self.aligner`'s grid;
         # `MultiResAligner` keeps level1
@@ -620,7 +614,6 @@ class MultiObjAligner:
         self,
         plot_shifts=True,
         refine=True,
-        multi_res=True,
         min_num_blocks=25,
         windowed_coarse=True,
         coarse_kwargs=None,
@@ -642,9 +635,7 @@ class MultiObjAligner:
         # with the same thumbnails, so a separate `make_aligner()` only
         # duplicated it -- and that duplicate cost a full thumbnail build.
         if mr is None:
-            mr = self.make_multi_res_aligner(
-                multi_res=multi_res, min_num_blocks=min_num_blocks
-            )
+            mr = self.make_multi_res_aligner(min_num_blocks=min_num_blocks)
         c21l = mr.aligners[0]
         # the coarse fit and the refinement both read these; the coarser levels
         # of `mr` never touch a thumbnail, so masking only the finest is enough.
@@ -1033,8 +1024,8 @@ class MultiObjAligner:
         (`docs/07`, 2026-08-28 note; strain measured in `docs/12`).
 
         `sigma_blocks` controls how gradually the displacement blends between
-        blocks (in block units); see
-        `align.block_displacement_transformed_moving_img`.
+        blocks, in block units: 0 is pure interpolation, ~0.3-1.5 dissolves
+        block seams further at the cost of erasing genuine local deformation.
         """
         import scipy.ndimage as ndi
 

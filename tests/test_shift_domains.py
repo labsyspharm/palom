@@ -136,28 +136,6 @@ def test_everything_loose_when_nothing_agrees():
     assert (labels == sd.LOOSE).all()
 
 
-# --- resolve_loose ----------------------------------------------------------
-
-
-def test_loose_blocks_take_the_nearest_domain():
-    shifts, grid = _field([[A, A, None, None, B, B]])
-    labels = sd.label_domains(shifts, grid)
-    filled = sd.resolve_loose(labels)
-    assert sd.LOOSE not in filled
-    assert filled.ravel().tolist() == [0, 0, 0, 1, 1, 1]
-
-
-def test_resolve_loose_is_a_no_op_without_loose_blocks():
-    shifts, grid = _field([[A, A]])
-    labels = sd.label_domains(shifts, grid)
-    assert (sd.resolve_loose(labels) == labels).all()
-
-
-def test_resolve_loose_survives_an_all_loose_field():
-    labels = np.full((2, 2), sd.LOOSE)
-    assert (sd.resolve_loose(labels) == sd.LOOSE).all()
-
-
 # --- offsets and summary ----------------------------------------------------
 
 

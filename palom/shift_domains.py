@@ -31,7 +31,6 @@ Agreement is relative and local, and its threshold is a physical displacement.
 """
 
 import numpy as np
-import scipy.ndimage as ndi
 import scipy.sparse
 import scipy.sparse.csgraph
 
@@ -110,24 +109,6 @@ def label_domains(shifts, grid_shape, valid=None, tol=DEFAULT_TOL,
     for new, old in enumerate(keep):
         labels[raw == old] = new
     return labels.reshape(h, w)
-
-
-def resolve_loose(labels):
-    """Fill `LOOSE` blocks from the nearest trusted domain.
-
-    Nearest by grid distance, and the caller is expected to take only that
-    domain's *translation* -- never its full transform. Extrapolating a
-    domain's rotation across a gap misplaces a distant block, which is why
-    ashlar's `_resolve_loose` is translation-only too.
-
-    Returns `labels` unchanged when no domain was trusted.
-    """
-    labels = np.asarray(labels)
-    loose = labels == LOOSE
-    if not loose.any() or (~loose).sum() == 0:
-        return labels.copy()
-    _, (rr, cc) = ndi.distance_transform_edt(loose, return_indices=True)
-    return labels[rr, cc]
 
 
 def domain_offsets(shifts, labels):

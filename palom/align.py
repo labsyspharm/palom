@@ -34,81 +34,6 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs, is_mask=False)
     ])[return_slice]
 
 
-def block_displacement_transformed_moving_img(
-    ref_img, moving_img, affine_matrix, shifts, grid_shape,
-    sigma_blocks=0.0, field_order=1, is_mask=False, cval=0.0,
-    interpolation="skimage",
-):
-    """Seam-free alternative to `block_affine_transformed_moving_img`.
-
-    Instead of giving each block its own affine (a piecewise-constant
-    translation that is discontinuous at block edges -> visible cracks), the
-    per-block `shifts` are treated as a coarse displacement field sampled at
-    block centers. A single global `affine_matrix` (moving -> ref) plus a
-    continuous interpolation of that field warps the moving image with one
-    resample per output chunk, so neighbouring chunks sample contiguous source
-    coordinates and no seams appear.
-
-    `sigma_blocks` controls how gradually the displacement blends between
-    blocks: it is a Gaussian smoothing of the (tiny) block-shift grid, in
-    block units (0 = pure interpolation; ~0.3-1.5 is a useful range -- larger
-    values dissolve seams further but erase genuine local deformation).
-    `field_order` is 1 (bilinear, C0 -- may show faint creases along block
-    lines) or 3 (bicubic, smoother but can ring near sharp shift changes) for
-    the coarse-grid upsampling. `interpolation` selects the final image
-    resample backend: "skimage" (float-precision, more accurate) or "cv2"
-    (fixed-point, ~1/32-px sub-pixel quantization, faster).
-
-    RAM: the full-resolution displacement field is never materialized. Each
-    output chunk computes its own displacement from the small `grid_shape`
-    grid and reads only the source crop it needs, mirroring the memory
-    profile of the existing per-block path.
-    """
-    assert img_util.is_single_channel(ref_img)
-    out_shape = tuple(int(s) for s in ref_img.shape[-2:])
-    cy, cx = ref_img.chunksize[-2:]
-
-    return_slice = slice(None)
-    if img_util.is_single_channel(moving_img) and moving_img.ndim == 2:
-        moving_img = moving_img[np.newaxis]
-        return_slice = 0
-
-    grid = np.asarray(shifts, dtype="float32").reshape(*grid_shape, 2)
-    # `block_affine_matrices` applies the shift in reference space, i.e.
-    # source = inv(A) @ (ref - shift); we add the field as inv(A) @ (ref + d),
-    # so the displacement is the negative of the per-block shift.
-    grid = -grid
-    if sigma_blocks and sigma_blocks > 0:
-        import scipy.ndimage as ndi
-        # smoothing happens on the small grid (cheap, RAM-free); no blur is
-        # applied across the channel/component axis
-        grid = ndi.gaussian_filter(
-            grid, sigma=(sigma_blocks, sigma_blocks, 0), mode="nearest"
-        )
-
-    inv_affine = np.linalg.inv(np.asarray(affine_matrix, dtype="float64"))
-    order = 0 if is_mask else 1
-    field_interp = cv2.INTER_LINEAR if field_order == 1 else cv2.INTER_CUBIC
-
-    template = da.zeros(out_shape, dtype="uint8", chunks=(cy, cx))
-    warped = [
-        template.map_blocks(
-            _displacement_remap_block,
-            src_array=c,
-            shift_grid=grid,
-            out_shape=out_shape,
-            inv_affine=inv_affine,
-            cval=float(cval),
-            module=interpolation,
-            order=order,
-            field_interp=field_interp,
-            dtype=moving_img.dtype,
-        )
-        for c in moving_img
-    ]
-    return da.array(warped)[return_slice]
-
-
 def _sample_displacement(rows, cols, shift_grid, out_shape, field_interp):
     """Per-pixel (dy, dx) for `rows`/`cols`, interpolated from a small
     block-center shift grid (cell-center aligned)."""
@@ -183,19 +108,6 @@ def _remap_crop(src_array, map_y, map_x, cval, module="skimage", order=1):
     map_x = np.ascontiguousarray(map_x, dtype="float32")
     map_y = np.ascontiguousarray(map_y, dtype="float32")
     return cv2.remap(crop, map_x, map_y, cv2_interp, borderValue=cval)
-
-
-def _displacement_remap_block(
-    _template, src_array=None, shift_grid=None, out_shape=None,
-    inv_affine=None, cval=0.0, module="skimage", order=1,
-    field_interp=cv2.INTER_LINEAR, block_info=None,
-):
-    (r0, r1), (c0, c1) = block_info[None]["array-location"]
-    rows = np.arange(r0, r1, dtype="float32")
-    cols = np.arange(c0, c1, dtype="float32")
-    dy, dx = _sample_displacement(rows, cols, shift_grid, out_shape, field_interp)
-    map_y, map_x = _ref_to_moving_coords(rows, cols, dy, dx, inv_affine)
-    return _remap_crop(src_array, map_y, map_x, cval, module=module, order=order)
 
 
 def _displacement_block(

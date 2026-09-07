@@ -337,13 +337,13 @@ class MultiResAligner:
                 )
                 aligner.compute_shifts(mask=mask)
 
-    def constrain_shifts(self, exclude_result_levels=None, domain_tol=None):
+    def constrain_shifts(self, domain_tol=None):
         aligners = self.aligners
         for aligner in aligners:
             # `Aligner.constrain_shifts` is idempotent (it re-constrains from
             # `original_shifts`), and `align` clears that attribute, so this is
             # safe to call unconditionally. To suppress a level's result, use
-            # `exclude_result_levels` rather than withholding the constrain.
+            # withholding the constrain.
             # each rung partitions its own field: the rungs measure
             # independently, so they are entitled to disagree about where
             # the domains are
@@ -379,9 +379,6 @@ class MultiResAligner:
             )
             for aa, ss in zip(aligners, grid_scales)
         ]
-        exclude_result_levels = exclude_result_levels or []
-        for level in exclude_result_levels:
-            valid_masks[level][:] = False
         mask = np.argmax(valid_masks, axis=0)
         out = np.zeros((2, *aligners[0].grid_shape))
         for ii, (aa, idx, ss) in enumerate(
