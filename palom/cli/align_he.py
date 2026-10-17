@@ -32,7 +32,6 @@ def align_he(
     expand_mask: bool = True,
     merge_gap: float = 500.0,
     min_num_blocks: int = 25,
-    windowed_coarse: bool = True,
     min_coarse_ncc: float = 0.02,
     only_coarse: bool = False,
     only_qc: bool = False,
@@ -171,20 +170,13 @@ def align_he(
             thumbnail_channel2=thumbnail_channel2,
             thumbnails_pixel_size=thumbnail_pixel_size,
         )
-        # reuse the coarse affine computed above as the baseline, instead of
-        # poking private attributes -- with the config it was matched under, so
-        # the per-object fits inherit it instead of searching for their own
-        mo_aligner.seed_baseline_coarse(
-            aligner.coarse_affine_matrix, aligner.coarse_match_config
-        )
+        # reuse the coarse affine computed above as the baseline the refinement
+        # starts from, instead of poking private attributes
+        mo_aligner.seed_baseline_coarse(aligner.coarse_affine_matrix)
         mo_aligner.run(
             segment=expand_mask,
             merge_gap=merge_gap,
             min_num_blocks=min_num_blocks,
-            windowed_coarse=windowed_coarse,
-            # the same coarse budget/workers the baseline fit above used, so
-            # every coarse registration in the run is the same registration
-            coarse_kwargs=dict(n_keypoints=n_keypoints, n_workers=coarse_n_workers),
             # each QC figure is written as it is drawn rather than swept up
             # here, so a run that dies on object 5 still leaves the figures for
             # objects 0-4 -- and object 5's earlier stages -- to look at

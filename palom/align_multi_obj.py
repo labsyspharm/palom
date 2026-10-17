@@ -1,4 +1,3 @@
-import itertools
 import pathlib
 import re
 from functools import cached_property
@@ -17,7 +16,6 @@ from . import (
     align_multi_res,
     align_refine,
     img_util,
-    register_coarse,
     register_util,
     shift_domains,
 )
@@ -29,25 +27,6 @@ from . import (
 # 8px level-0 steps, so two neighbours resolved at different rungs can differ
 # by that much without disagreeing about anything.
 DEFAULT_DOMAIN_TOL = shift_domains.DEFAULT_TOL
-
-
-def transform_bbox(bbox, affine_mx, shape=None):
-    """Map one reference-frame bbox through `affine_mx` into the moving frame.
-
-    `shape` clips the result to the moving image's bounds. Without it a bad
-    affine can hand back a box that lies entirely outside the image, whose slice
-    is empty -- which silently turns the masked thumbnail into a constant, and
-    the object's coarse fit into a registration against a blank image.
-    """
-    rs, re, cs, ce = bbox
-    tform = skimage.transform.AffineTransform(affine_mx)
-    hi = (None, None) if shape is None else (shape[0], shape[1])
-    xx, yy = tform.inverse(list(itertools.product([cs, ce], [rs, re]))).T
-    rs2, cs2 = np.floor([yy.min(), xx.min()]).astype(int)
-    re2, ce2 = np.ceil([yy.max(), xx.max()]).astype(int)
-    rs2, re2 = np.clip([rs2, re2], 0, hi[0])
-    cs2, ce2 = np.clip([cs2, ce2], 0, hi[1])
-    return [rs2, re2, cs2, ce2]
 
 
 class MultiObjAligner:
@@ -94,8 +73,6 @@ class MultiObjAligner:
         segment=True,
         refine=True,
         min_num_blocks=25,
-        windowed_coarse=True,
-        coarse_kwargs=None,
         domain_tol=DEFAULT_DOMAIN_TOL,
         plot=True,
         qc_dir=None,
@@ -115,31 +92,20 @@ class MultiObjAligner:
             plot_shifts=plot,
             refine=refine,
             min_num_blocks=min_num_blocks,
-            windowed_coarse=windowed_coarse,
-            coarse_kwargs=coarse_kwargs,
             domain_tol=domain_tol,
         )
         logger.info("Alignment QC summary\n" + self.qc_summary())
 
-    def seed_baseline_coarse(self, coarse_affine_matrix, match_config=None):
+    def seed_baseline_coarse(self, coarse_affine_matrix):
         """Seed the baseline (whole-image) coarse affine from outside, instead
         of letting `self.aligner` register it lazily.
 
         `coarse_affine_matrix` is in the thumbnail frame (2x3 or 3x3, as
-        produced by `register_coarse.coarse_register`). The baseline is used for
-        the tissue bbox transform, the background fill in the block-affine
-        grid, and the fallback affine in the displacement warp.
-
-        Pass `match_config` (the seeding fit's `Aligner.coarse_match_config`)
-        along with it -- a matrix alone carries no record of the configuration it
-        was matched under, and `match_config` would have to search for one again.
+        produced by `register_coarse.coarse_register`). The baseline is the
+        coarse affine the refinement starts from, the background fill in the
+        block-affine grid, and the fallback affine in the displacement warp.
         """
         self.aligner.coarse_affine_matrix = coarse_affine_matrix
-        self.aligner.coarse_match_config = match_config
-        # `tissue_bbox_moving` was derived from the previous baseline, and
-        # `match_config` from the previous config
-        self.__dict__.pop("_tissue_bbox_moving", None)
-        self.__dict__.pop("match_config", None)
 
     @cached_property
     def aligner(self):
@@ -153,63 +119,14 @@ class MultiObjAligner:
     def moving_thumbnail(self):
         return np.array(self.aligner.moving_thumbnail)
 
-    @cached_property
-    def match_config(self):
-        """The intensity/orientation config every object's coarse fit reuses.
-
-        Inherited from the baseline fit -- the config that fit actually committed to,
-        which on the windowed route is the winning tile's. The config encodes the
-        modality relationship (which image is histogram-matched into which, and
-        whether it is intensity-inverted) and whether the scans are mirrored, all
-        properties of the slide pair rather than of one tissue piece. Re-searching per
-        object costs 8 ORB+RANSAC runs each (x N tiles on the windowed route) on a
-        thumbnail that is mostly background fill, where the search's `min_fold_increase`
-        test is weak and can settle on a different config than the whole slide did.
-
-        Inheriting rather than searching afresh matters for the same reason. A fresh
-        whole-thumbnail search sees mostly background on a small-portion pair, so it
-        routinely exhausts `search_best_match_config`'s recursion without any config
-        standing clear and returns the argmax of a flat field -- while the baseline,
-        on the windowed route, had a tile sitting on real tissue that found one
-        decisively. Objects were being pinned to the weaker of the two answers, and
-        to one the baseline they perturb never agreed to.
-
-        ponytail: only a seeded baseline (`seed_baseline_coarse` without a config)
-        still searches. A piece placed mirrored relative to the rest of the slide
-        gets the wrong flip either way, its fit comes back near identity, and
-        `_pick_affine` drops it back to the baseline affine (visible in the QC
-        panel and scores). Upgrade when seen in
-        practice: re-search per object when the pinned-config fit scores weak.
-        """
-        # reading the baseline runs `Aligner`'s lazy coarse fit if nothing has
-        # seeded or triggered it yet, which is what leaves the config behind
-        _ = self.baseline_coarse_affine_matrix
-        config = self.aligner.coarse_match_config
-        if config is not None:
-            logger.info(
-                f"Pinned coarse match config for all objects:"
-                f" {register_coarse.format_config(config)}"
-                f" (inherited from the baseline coarse fit)"
-            )
-            return config
-        n_inliers, config = register_coarse.search_best_match_config(
-            self.ref_thumbnail, self.moving_thumbnail
-        )
-        logger.info(
-            f"Pinned coarse match config for all objects:"
-            f" {register_coarse.format_config(config)} ({n_inliers} inliers;"
-            f" searched, as the seeded baseline carried no config)"
-        )
-        return config
-
     @staticmethod
     def _background_fill_value(thumbnail):
-        """Mean background intensity, used to fill everything outside an object.
+        """Mean background intensity, used to fill everything outside the tissue.
 
         Falls back to the whole-image mean when `entropy_mask` claims the entire
         frame: `np.mean` of an empty selection is NaN, and that NaN would fill
-        the masked thumbnail and poison every object's coarse fit rather than
-        failing loudly.
+        the masked thumbnail and poison the refinement's tissue sampling rather
+        than failing loudly.
         """
         background = thumbnail[~img_util.entropy_mask(thumbnail)]
         if background.size == 0:
@@ -223,10 +140,6 @@ class MultiObjAligner:
     @cached_property
     def fill_value_ref_thumbnail(self):
         return self._background_fill_value(self.ref_thumbnail)
-
-    @cached_property
-    def fill_value_moving_thumbnail(self):
-        return self._background_fill_value(self.moving_thumbnail)
 
     # the baseline coarse/full-res affines live on `self.aligner` -- no copy is
     # kept here, and no local coarse defaults either: reading one before
@@ -252,21 +165,6 @@ class MultiObjAligner:
                 " which calls it) first"
             )
         return self._tissue_bbox
-
-    @property
-    def tissue_bbox_moving(self):
-        """`tissue_bbox` mapped through the baseline coarse affine.
-
-        Cached, and invalidated by `segment_objects` (new box) and
-        `seed_baseline_coarse` (new affine).
-        """
-        if not hasattr(self, "_tissue_bbox_moving"):
-            self._tissue_bbox_moving = transform_bbox(
-                self.tissue_bbox,
-                self.baseline_coarse_affine_matrix,
-                shape=self.moving_thumbnail.shape,
-            )
-        return self._tissue_bbox_moving
 
     # a typical WSI is ~2 cm across, so the default 500 µm merge gap is ~2.5% of
     # the image width; used as the fallback when the physical scale is unknown
@@ -359,8 +257,6 @@ class MultiObjAligner:
             if rr.size
             else np.zeros(4, dtype=int)
         )
-        # derived from the box above; re-segmenting invalidates it
-        self.__dict__.pop("_tissue_bbox_moving", None)
         self.segmentation_mask = img_util.repeat_2d(
             merged.astype("int32"), (downscale_factor, downscale_factor)
         )[: shape[0], : shape[1]]
@@ -423,14 +319,9 @@ class MultiObjAligner:
         ax1.imshow(_proc_img(self.ref_thumbnail), cmap="gray")
         ax2.imshow(_proc_img(self.moving_thumbnail), cmap="gray")
         ax1.set_title("reference (tissue outline + bbox)", fontsize=8)
-        ax2.set_title(
-            "moving (bbox through the baseline coarse affine;\n"
-            "dashed = the axis-aligned crop taken from it)",
-            fontsize=8,
-        )
+        ax2.set_title("moving (bbox through the baseline coarse affine)", fontsize=8)
         tform = skimage.transform.AffineTransform(self.baseline_coarse_affine_matrix)
         rs, re, cs, ce = self.tissue_bbox
-        rs2, re2, cs2, ce2 = self.tissue_bbox_moving
         color = colors[0]
         # a contour, not `find_boundaries`: a raster outline at thumbnail
         # resolution aliases into dashes once the figure is rendered small
@@ -444,20 +335,6 @@ class MultiObjAligner:
         ax2.add_patch(
             matplotlib.patches.Polygon(
                 tform.inverse(mpatch.get_corners()), fill=False, edgecolor=color
-            )
-        )
-        # what is actually cropped for the coarse fit: the mapped box is a
-        # parallelogram, the crop is its axis-aligned hull clipped to the image,
-        # and a bad affine shows up as the two disagreeing
-        ax2.add_patch(
-            matplotlib.patches.Rectangle(
-                (cs2, rs2),
-                ce2 - cs2,
-                re2 - rs2,
-                fill=False,
-                edgecolor=color,
-                linestyle="--",
-                linewidth=0.8,
             )
         )
         for ax, img in [(ax1, self.ref_thumbnail), (ax2, self.moving_thumbnail)]:
@@ -525,19 +402,17 @@ class MultiObjAligner:
     def _pick_affine(self, candidates, ref_crop, moving, to_crop=None):
         """Choose among coarse affine candidates by overlap score.
 
-        This used to accept the masked fit unconditionally. That fit is a fresh
-        feature match on masked thumbnails, so it can land well off while the
-        whole-image baseline -- which it is a perturbation of -- was fine. A bad
-        affine is a hard visible misregistration, so the fit has to beat the
-        fallback rather than merely exist.
+        A refinement can land well off while the whole-image baseline it
+        perturbs was fine, and a bad affine is a hard visible misregistration,
+        so the refined fit has to beat the fallback rather than merely exist.
 
         The comparison is deliberately blunt: keep the most refined candidate
         unless its score has collapsed (see `FALLBACK_SCORE_RATIO`). The score
         cannot rank near-neighbours, so a close contest is not evidence and must
         not move the choice -- only a fit that landed nowhere is detectable.
 
-        Score on the object's *crop* of the real thumbnails, not on the masked
-        ones the coarse fit was made from: masking fills everything outside the
+        Score on the tissue's *crop* of the real thumbnails, not on the masked
+        ones the refinement samples from: masking fills everything outside the
         bbox with a constant, and `score_overlap` whitens, so the synthetic
         rectangle edge would carry weight that the tissue should.
 
@@ -615,21 +490,12 @@ class MultiObjAligner:
         plot_shifts=True,
         refine=True,
         min_num_blocks=25,
-        windowed_coarse=True,
-        coarse_kwargs=None,
         mr=None,
         domain_tol=DEFAULT_DOMAIN_TOL,
     ):
         rs, re, cs, ce = np.array(self.tissue_bbox).astype(int)
-        rsm, rem, csm, cem = self.tissue_bbox_moving
-
         masked_t_ref = np.ones_like(self.ref_thumbnail) * self.fill_value_ref_thumbnail
         masked_t_ref[rs:re, cs:ce] = self.ref_thumbnail[rs:re, cs:ce]
-
-        masked_t_moving = (
-            np.ones_like(self.moving_thumbnail) * self.fill_value_moving_thumbnail
-        )
-        masked_t_moving[rsm:rem, csm:cem] = self.moving_thumbnail[rsm:rem, csm:cem]
 
         # Built up front so its finest rung can *be* `c21l`: it is at `level1`
         # with the same thumbnails, so a separate `make_aligner()` only
@@ -637,76 +503,20 @@ class MultiObjAligner:
         if mr is None:
             mr = self.make_multi_res_aligner(min_num_blocks=min_num_blocks)
         c21l = mr.aligners[0]
-        # the coarse fit and the refinement both read these; the coarser levels
-        # of `mr` never touch a thumbnail, so masking only the finest is enough.
-        # Assigned per object, so a shared ladder never carries the previous
-        # object's mask into this one's coarse fit.
+        # the refinement picks its tissue windows from this; the coarser levels
+        # of `mr` never touch a thumbnail, so masking only the finest is enough
         c21l.ref_thumbnail = masked_t_ref
-        c21l.moving_thumbnail = masked_t_moving
 
-        # candidates in increasing order of preference; the whole-image baseline
-        # is the known-good fallback this object's own fit has to beat
+        # Refine the whole-image baseline directly. A second coarse fit on the
+        # masked thumbnails used to sit in between; on the reference slides it
+        # changed nothing the shift field did not absorb, and where the
+        # refinement from it was rejected it held a worse affine than refining
+        # the baseline (`docs/14`). Candidates are in increasing order of
+        # preference, the baseline being the known-good fallback.
         candidates = [
             ("baseline", np.asarray(self.baseline_coarse_affine_matrix)),
         ]
-        # An empty moving crop means the baseline affine puts this object off the
-        # moving image entirely, so `masked_t_moving` is a constant -- registering
-        # against it is a guaranteed-useless feature match, and `score_overlap`
-        # would reject its result anyway. Skip straight to the baseline.
-        if rem <= rsm or cem <= csm:
-            logger.warning(
-                "The baseline affine maps the tissue bbox outside the moving"
-                " thumbnail; keeping the baseline coarse affine"
-            )
-            c21l.coarse_affine_matrix = self.baseline_coarse_affine_matrix
-        else:
-            # flip/intensity-invert and the reference-order search are handled
-            # inside the engine, so no explicit `test_flip`/`test_intensity_invert`
-            default_kwargs = {
-                # follows the caller's plotting choice rather than forcing it on
-                "plot_match_result": plot_shifts,
-                # searched once for the slide pair, not per object -- see `match_config`
-                "config": self.match_config,
-            }
-            coarse_kwargs = {**default_kwargs, **(coarse_kwargs or {})}
-            figs_before = self._fignums()
-            if windowed_coarse:
-                # `coarse_register` adds a windowed retry when the whole-image match
-                # comes back weak, which is an object's only chance of recovering
-                # from a failed fit -- `search_then_register` just returns identity.
-                # `matched_area_ratio=1.0` skips its physical-footprint test: both
-                # masked thumbnails are full-size (the object's bbox is filled in and
-                # the rest is background), so the test would compare the whole slides
-                # and never see the small portion the object actually is.
-                _mx = register_coarse.coarse_register(
-                    np.asarray(masked_t_ref),
-                    np.asarray(masked_t_moving),
-                    matched_area_ratio=1.0,
-                    **coarse_kwargs,
-                )
-            else:
-                # no windowed tile search on this route, so nothing to parallelize
-                coarse_kwargs.pop("n_workers", None)
-                # ponytail: an object whose whole-image fit lands nowhere has no
-                # second chance here -- `search_then_register` returns identity and
-                # `_pick_affine` drops it to the baseline, so it is never
-                # better than the whole-slide affine. Observed on LSP74545
-                # (2026-08-07): every object fit came back at 14 matches / score
-                # 0.000 and fell back. The retry exists one branch up; the reason
-                # it is not the default is cost -- N tiles x 8 configs per object,
-                # on thumbnails that are mostly background fill. Upgrade path:
-                # take the `windowed_coarse=True` branch per object when the
-                # whole-image fit scores below `FALLBACK_SCORE_RATIO` of the
-                # baseline, so the retry costs only the objects that need it,
-                # rather than making `windowed_coarse` an all-or-nothing flag.
-                _mx = register_coarse.search_then_register(
-                    np.asarray(masked_t_ref),
-                    np.asarray(masked_t_moving),
-                    **coarse_kwargs,
-                )
-            c21l.coarse_affine_matrix = _mx
-            self._finish_new_figs(figs_before, "Coarse alignment")
-            candidates.append(("object", c21l.coarse_affine_matrix))
+        c21l.coarse_affine_matrix = self.baseline_coarse_affine_matrix
 
         # block region from the segmentation mask rather than the bbox, so
         # background inside the box does not steer the fit
@@ -721,7 +531,7 @@ class MultiObjAligner:
             self._finish_new_figs(figs_before, "Coarse affine refinement")
             if refined is not None:
                 c21l.coarse_affine_matrix = refined
-                candidates.append(("object+refine", c21l.coarse_affine_matrix))
+                candidates.append(("refine", c21l.coarse_affine_matrix))
 
         chosen, scores = self._pick_affine(
             candidates,
@@ -827,8 +637,7 @@ class MultiObjAligner:
                 "affine": chosen,
                 # what would have been used absent a score collapse; recorded
                 # rather than re-derived, since the candidate list is not fixed
-                # (a bbox landing off the moving image never gets an "object"
-                # candidate at all)
+                # (a rejected refinement leaves only the baseline)
                 "preferred": candidates[-1][0],
                 "scores": scores,
                 "refine": refine_stats,
@@ -959,7 +768,7 @@ class MultiObjAligner:
         # rows built by hand (the self-checks)
         preferred = r.get("preferred") or next(
             name
-            for name in ("object+refine", "object", "baseline")
+            for name in ("refine", "baseline")
             if name in r["scores"]
         )
         notes = []

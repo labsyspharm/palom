@@ -197,8 +197,8 @@ def test_qc_note_appears_only_when_domains_disagree():
 
     def row(**dom):
         return dict(
-            n_blocks=100, affine="object", preferred="object",
-            scores={"object": 0.4}, refine=None, shift_median=1.0, shift_max=2.0,
+            n_blocks=100, affine="refine", preferred="refine",
+            scores={"refine": 0.4}, refine=None, shift_median=1.0, shift_max=2.0,
             levels={0: 100}, plot_failed=False, domains=dom,
         )
 
@@ -232,8 +232,8 @@ def test_low_coverage_is_flagged_for_review_not_failed():
 
     def row(cov, dom):
         return dict(
-            n_blocks=300, affine="object", preferred="object",
-            scores={"object": 0.3}, refine=None, shift_median=5.0, shift_max=50.0,
+            n_blocks=300, affine="refine", preferred="refine",
+            scores={"refine": 0.3}, refine=None, shift_median=5.0, shift_max=50.0,
             levels={0: 300}, plot_failed=False,
             domains=dict(domains=dom, separation=99.0, coverage=cov),
         )
