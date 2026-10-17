@@ -1006,7 +1006,6 @@ class MultiObjAligner:
         self,
         moving_img,
         sigma_blocks=0.0,
-        field_order=1,
         is_mask=False,
         cval=0.0,
         interpolation="skimage",
@@ -1082,7 +1081,6 @@ class MultiObjAligner:
             d = np.where(valid[..., None], num / np.maximum(den[..., None], 1e-6), d)
         d = np.ascontiguousarray(d)
 
-        field_interp = cv2.INTER_LINEAR if field_order == 1 else cv2.INTER_CUBIC
         order = 0 if is_mask else 1
         tissue_mask = np.ascontiguousarray(self.segmentation_mask > 0)
 
@@ -1106,7 +1104,6 @@ class MultiObjAligner:
                 cval=float(cval),
                 module=interpolation,
                 order=order,
-                field_interp=field_interp,
                 dtype=mimg.dtype,
             )
             for c in mimg

@@ -34,33 +34,20 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs, is_mask=False)
     ])[return_slice]
 
 
-def _interp_weights(pos, n, cubic=False):
-    """``(len(pos), n)`` matrix whose row ``i`` interpolates a length-`n` signal
-    at fractional index ``pos[i]``, borders replicated -- cv2's bilinear or
-    bicubic (a=-0.75) kernel, evaluated in full floating point."""
+def _interp_weights(pos, n):
+    """``(len(pos), n)`` matrix whose row ``i`` linearly interpolates a
+    length-`n` signal at fractional index ``pos[i]``, borders replicated."""
     i0 = np.floor(pos).astype(int)
-    t = (pos - i0)[:, None]
-    if cubic:
-        a = -0.75
-        offsets = np.arange(-1, 3)
-        d = np.abs(t - offsets)
-        w = np.where(
-            d <= 1,
-            ((a + 2) * d - (a + 3)) * d**2 + 1,
-            ((a * d - 5 * a) * d + 8 * a) * d - 4 * a,
-        )
-    else:
-        offsets = np.arange(2)
-        w = np.hstack([1 - t, t])
-    taps = np.clip(i0[:, None] + offsets, 0, n - 1)
+    t = pos - i0
     m = np.zeros((len(pos), n), dtype="float32")
-    np.add.at(m, (np.arange(len(pos))[:, None], taps), w)
+    np.add.at(m, (np.arange(len(pos)), np.clip(i0, 0, n - 1)), 1 - t)
+    np.add.at(m, (np.arange(len(pos)), np.clip(i0 + 1, 0, n - 1)), t)
     return m
 
 
-def _sample_displacement(rows, cols, shift_grid, out_shape, field_interp):
-    """Per-pixel (dy, dx) for `rows`/`cols`, interpolated from a small
-    block-center shift grid (cell-center aligned).
+def _sample_displacement(rows, cols, shift_grid, out_shape):
+    """Per-pixel (dy, dx) for `rows`/`cols`, bilinearly interpolated from a
+    small block-center shift grid (cell-center aligned).
 
     The sample points form a rectilinear grid, so the interpolation is
     separable: ``Wr @ grid @ Wc.T``. This used to be `cv2.remap` over the grid,
@@ -71,11 +58,10 @@ def _sample_displacement(rows, cols, shift_grid, out_shape, field_interp):
     """
     nr, nc = shift_grid.shape[:2]
     H, W = out_shape
-    cubic = field_interp == cv2.INTER_CUBIC
     grow = (np.asarray(rows, dtype="float64") + 0.5) * (nr / H) - 0.5
     gcol = (np.asarray(cols, dtype="float64") + 0.5) * (nc / W) - 0.5
-    wr = _interp_weights(grow, nr, cubic)
-    wc = _interp_weights(gcol, nc, cubic)
+    wr = _interp_weights(grow, nr)
+    wc = _interp_weights(gcol, nc)
     dy, dx = wr @ np.moveaxis(np.asarray(shift_grid, dtype="float32"), -1, 0) @ wc.T
     return dy, dx
 
@@ -137,7 +123,7 @@ def _remap_crop(src_array, map_y, map_x, cval, module="skimage", order=1):
 def _displacement_block(
     _template, src_array=None, inv_affine=None, grid=None, base_inv_affine=None,
     tissue_mask=None, mask_scale=1.0, out_shape=None, cval=0.0,
-    module="skimage", order=1, field_interp=cv2.INTER_LINEAR, block_info=None,
+    module="skimage", order=1, block_info=None,
 ):
     """One output chunk of a displacement warp.
 
@@ -163,7 +149,7 @@ def _displacement_block(
         return _remap_crop(src_array, map_y, map_x, cval, module=module, order=order)
 
     if is_tissue.all():
-        dy, dx = _sample_displacement(rows, cols, grid, out_shape, field_interp)
+        dy, dx = _sample_displacement(rows, cols, grid, out_shape)
         return _warp(inv_affine, dy, dx)
 
     zeros = np.zeros((h, w), dtype="float32")
@@ -171,7 +157,7 @@ def _displacement_block(
         return _warp(base_inv_affine, zeros, zeros)
 
     result = _warp(base_inv_affine, zeros, zeros)
-    dy, dx = _sample_displacement(rows, cols, grid, out_shape, field_interp)
+    dy, dx = _sample_displacement(rows, cols, grid, out_shape)
     result[is_tissue] = _warp(inv_affine, dy, dx)[is_tissue]
     return result
 
