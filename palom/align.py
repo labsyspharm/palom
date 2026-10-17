@@ -34,25 +34,49 @@ def block_affine_transformed_moving_img(ref_img, moving_img, mxs, is_mask=False)
     ])[return_slice]
 
 
+def _interp_weights(pos, n, cubic=False):
+    """``(len(pos), n)`` matrix whose row ``i`` interpolates a length-`n` signal
+    at fractional index ``pos[i]``, borders replicated -- cv2's bilinear or
+    bicubic (a=-0.75) kernel, evaluated in full floating point."""
+    i0 = np.floor(pos).astype(int)
+    t = (pos - i0)[:, None]
+    if cubic:
+        a = -0.75
+        offsets = np.arange(-1, 3)
+        d = np.abs(t - offsets)
+        w = np.where(
+            d <= 1,
+            ((a + 2) * d - (a + 3)) * d**2 + 1,
+            ((a * d - 5 * a) * d + 8 * a) * d - 4 * a,
+        )
+    else:
+        offsets = np.arange(2)
+        w = np.hstack([1 - t, t])
+    taps = np.clip(i0[:, None] + offsets, 0, n - 1)
+    m = np.zeros((len(pos), n), dtype="float32")
+    np.add.at(m, (np.arange(len(pos))[:, None], taps), w)
+    return m
+
+
 def _sample_displacement(rows, cols, shift_grid, out_shape, field_interp):
     """Per-pixel (dy, dx) for `rows`/`cols`, interpolated from a small
-    block-center shift grid (cell-center aligned)."""
+    block-center shift grid (cell-center aligned).
+
+    The sample points form a rectilinear grid, so the interpolation is
+    separable: ``Wr @ grid @ Wc.T``. This used to be `cv2.remap` over the grid,
+    which snaps sample positions to 1/32 of a *cell* -- with 1024px blocks the
+    field held still for 32 output rows, then jumped by 1/32 of the
+    neighbouring blocks' difference: a 128px domain step became 4px seams
+    every 32 rows in the warped image.
+    """
     nr, nc = shift_grid.shape[:2]
     H, W = out_shape
-    grow = ((rows + 0.5) * (nr / H) - 0.5).astype("float32")
-    gcol = ((cols + 0.5) * (nc / W) - 0.5).astype("float32")
-    samp_x, samp_y = np.meshgrid(gcol, grow)
-    samp_x = np.ascontiguousarray(samp_x, dtype="float32")
-    samp_y = np.ascontiguousarray(samp_y, dtype="float32")
-    grid = np.asarray(shift_grid, dtype="float32")
-    dy = cv2.remap(
-        np.ascontiguousarray(grid[..., 0]), samp_x, samp_y, field_interp,
-        borderMode=cv2.BORDER_REPLICATE,
-    )
-    dx = cv2.remap(
-        np.ascontiguousarray(grid[..., 1]), samp_x, samp_y, field_interp,
-        borderMode=cv2.BORDER_REPLICATE,
-    )
+    cubic = field_interp == cv2.INTER_CUBIC
+    grow = (np.asarray(rows, dtype="float64") + 0.5) * (nr / H) - 0.5
+    gcol = (np.asarray(cols, dtype="float64") + 0.5) * (nc / W) - 0.5
+    wr = _interp_weights(grow, nr, cubic)
+    wc = _interp_weights(gcol, nc, cubic)
+    dy, dx = wr @ np.moveaxis(np.asarray(shift_grid, dtype="float32"), -1, 0) @ wc.T
     return dy, dx
 
 
